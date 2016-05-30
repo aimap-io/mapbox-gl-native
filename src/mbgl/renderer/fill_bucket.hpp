@@ -32,7 +32,7 @@ public:
     FillBucket();
     ~FillBucket() override;
 
-    void upload(gl::GLObjectStore&) override;
+    void upload(gl::ObjectStore&) override;
     void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
     bool hasData() const override;
     bool needsClipping() const override;
@@ -40,10 +40,10 @@ public:
     void addGeometry(const GeometryCollection&);
     void tessellate();
 
-    void drawElements(PlainShader&, gl::GLObjectStore&);
-    void drawElements(PatternShader&, gl::GLObjectStore&);
-    void drawVertices(OutlineShader&, gl::GLObjectStore&);
-    void drawVertices(OutlinePatternShader&, gl::GLObjectStore&);
+    void drawElements(PlainShader&, gl::ObjectStore&);
+    void drawElements(PatternShader&, gl::ObjectStore&);
+    void drawVertices(OutlineShader&, gl::ObjectStore&);
+    void drawVertices(OutlinePatternShader&, gl::ObjectStore&);
 
 private:
     TESSalloc *allocator;

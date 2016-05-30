@@ -18,7 +18,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
                         float sdfFontSize,
                         std::array<float, 2> texsize,
                         SDFShader& sdfShader,
-                        void (SymbolBucket::*drawSDF)(SDFShader&, gl::GLObjectStore&),
+                        void (SymbolBucket::*drawSDF)(SDFShader&, gl::ObjectStore&),
 
                         // Layout
                         RotationAlignmentType rotationAlignment,
@@ -72,7 +72,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
     sdfShader.u_zoom = (state.getZoom() - zoomAdjust) * 10; // current zoom level
 
     config.activeTexture = GL_TEXTURE1;
-    frameHistory.bind(glObjectStore);
+    frameHistory.bind(store);
     sdfShader.u_fadetexture = 1;
 
     // The default gamma value has to be adjust for the current pixelratio so that we're not
@@ -92,7 +92,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
         sdfShader.u_buffer = (haloOffset - haloWidth / fontScale) / sdfPx;
 
         setDepthSublayer(0);
-        (bucket.*drawSDF)(sdfShader, glObjectStore);
+        (bucket.*drawSDF)(sdfShader, store);
     }
 
     // Then, we draw the text/icon over the halo
@@ -103,7 +103,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
         sdfShader.u_buffer = (256.0f - 64.0f) / 256.0f;
 
         setDepthSublayer(1);
-        (bucket.*drawSDF)(sdfShader, glObjectStore);
+        (bucket.*drawSDF)(sdfShader, store);
     }
 }
 
@@ -159,7 +159,7 @@ void Painter::renderSymbol(SymbolBucket& bucket,
         const bool iconScaled = fontScale != 1 || frame.pixelRatio != activeSpriteAtlas->getPixelRatio() || bucket.iconsNeedLinear;
         const bool iconTransformed = layout.iconRotationAlignment == RotationAlignmentType::Map || angleOffset != 0 || state.getPitch() != 0;
         config.activeTexture = GL_TEXTURE0;
-        activeSpriteAtlas->bind(sdf || state.isChanging() || iconScaled || iconTransformed, glObjectStore);
+        activeSpriteAtlas->bind(sdf || state.isChanging() || iconScaled || iconTransformed, store);
 
         if (sdf) {
             renderSDF(bucket,
@@ -220,11 +220,11 @@ void Painter::renderSymbol(SymbolBucket& bucket,
             iconShader->u_opacity = paint.iconOpacity;
 
             config.activeTexture = GL_TEXTURE1;
-            frameHistory.bind(glObjectStore);
+            frameHistory.bind(store);
             iconShader->u_fadetexture = 1;
 
             setDepthSublayer(0);
-            bucket.drawIcons(*iconShader, glObjectStore);
+            bucket.drawIcons(*iconShader, store);
         }
     }
 
@@ -237,7 +237,7 @@ void Painter::renderSymbol(SymbolBucket& bucket,
         }
 
         config.activeTexture = GL_TEXTURE0;
-        glyphAtlas->bind(glObjectStore);
+        glyphAtlas->bind(store);
 
         renderSDF(bucket,
                   tileID,
@@ -271,7 +271,7 @@ void Painter::renderSymbol(SymbolBucket& bucket,
         config.lineWidth = 1.0f;
 
         setDepthSublayer(0);
-        bucket.drawCollisionBoxes(*collisionBoxShader, glObjectStore);
+        bucket.drawCollisionBoxes(*collisionBoxShader, store);
 
     }
 
