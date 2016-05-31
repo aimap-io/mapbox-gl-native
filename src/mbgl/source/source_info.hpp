@@ -23,6 +23,12 @@ public:
     LatLng center;
     double zoom = 0;
     LatLngBounds bounds = LatLngBounds::world();
+
+    std::vector<uint8_t> stepZooms;
+
+    uint8_t sourceZoom(uint8_t szoom) const {
+        return szoom >= maxZoom ? maxZoom : (stepZooms.empty() ? szoom : stepZooms[szoom]);
+    }
 };
 
 } // namespace mbgl

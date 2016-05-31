@@ -99,6 +99,33 @@ void parseTileJSONMember(const JSValue& value, std::array<double, 4>& target, co
     }
 }
 
+template<typename Int, typename = std::enable_if_t<std::is_integral<Int>::value, void>>
+void parseTileJSONMember(const JSValue& value, std::vector<Int>& target, const char* name) {
+    if (!value.HasMember(name)) {
+        return;
+    }
+
+    const JSValue& property = value[name];
+    if (!property.IsArray()) {
+        return;
+    }
+
+    for (rapidjson::SizeType i = 0; i < property.Size(); i++) {
+        if (!property[i].IsNumber()) {
+            return;
+        }
+    }
+
+    for (rapidjson::SizeType i = 0; i < property.Size(); i++) {
+        if (sizeof(Int) <= 4) {
+            target.push_back(property[i].GetInt());
+        }
+        else {
+            target.push_back(property[i].GetInt64());
+        }
+    }
+}
+
 } // end namespace
 
 StyleParser::~StyleParser() = default;
@@ -294,6 +321,28 @@ std::unique_ptr<SourceInfo> StyleParser::parseTileJSON(const JSValue& value) {
     info->zoom = array[2];
     parseTileJSONMember(value, array, "bounds");
     info->bounds = LatLngBounds::hull({ array[0], array[1] }, { array[2], array[3] });
+
+    std::vector<uint8_t> stepZooms;
+    parseTileJSONMember(value, stepZooms, "stepZooms");
+    if (!stepZooms.empty()) {
+        if (stepZooms.back() == info->maxZoom) {
+            info->stepZooms.resize(info->maxZoom);
+            std::size_t j = 0;
+            uint8_t lastStepZoom = 0;
+            for (auto stepZoom : stepZooms) {
+                for (; j < stepZoom; ++j) {
+                    info->stepZooms[j] = lastStepZoom;
+                }
+                lastStepZoom = stepZoom;
+            }
+        }
+        else {
+            Log::Error(Event::ParseStyle,
+                       "the max of stepZooms : %d is not equals to maxZoom %d",
+                       stepZooms.back(),
+                       info->maxZoom);
+        }
+    }
 
     return info;
 }

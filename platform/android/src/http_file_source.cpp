@@ -20,7 +20,7 @@ public:
 
 class HTTPRequest : public AsyncRequest {
 public:
-    static constexpr auto Name() { return "com/mapbox/mapboxsdk/http/HTTPRequest"; };
+    static constexpr auto Name() { return "io/aimap/sdk/http/HTTPRequest"; };
 
     HTTPRequest(jni::JNIEnv&, const Resource&, FileSource::Callback);
     ~HTTPRequest();

@@ -163,7 +163,7 @@ void Source::load(FileSource& fileSource) {
 void Source::updateMatrices(const mat4 &projMatrix, const TransformState &transform) {
     for (const auto& pair : tiles) {
         Tile &tile = *pair.second;
-        transform.matrixFor(tile.matrix, tile.id, std::min(static_cast<uint8_t>(info->maxZoom), tile.id.z));
+        transform.matrixFor(tile.matrix, tile.id, info->sourceZoom(tile.id.z));
         matrix::multiply(tile.matrix, projMatrix, tile.matrix);
     }
 }
@@ -182,6 +182,18 @@ std::forward_list<Tile*> Source::getLoadedTiles() const {
         auto tile = pair.second.get();
         if (tile->data->isReady() && tile->data->hasData()) {
             it = ptrs.insert_after(it, tile);
+            Log::Info(Event::General,
+                      "loaded tile %d,%d,%d,%d", tile->id.z, tile->id.x, tile->id.y, tile->id.sourceZ);
+        }
+        else {
+            //Log::Info(Event::General,
+            //          "faied to load tile %d,%d,%d,%d isReady %d, hasData %d",
+            //          tile->id.z,
+            //          tile->id.x,
+            //          tile->id.y,
+            //          tile->id.sourceZ,
+            //          tile->data->isReady(),
+            //          tile->data->hasData());
         }
     }
     return ptrs;
@@ -365,9 +377,7 @@ bool Source::update(const StyleUpdateParameters& parameters) {
         const bool reparseOverscaled = type != SourceType::Raster;
 
         const auto actualZ = zoom;
-        if (zoom > info->maxZoom) {
-            zoom = info->maxZoom;
-        }
+        zoom = info->sourceZoom(zoom);
 
         required = tileCover(parameters.transformState, zoom, reparseOverscaled ? actualZ : zoom);
     }
