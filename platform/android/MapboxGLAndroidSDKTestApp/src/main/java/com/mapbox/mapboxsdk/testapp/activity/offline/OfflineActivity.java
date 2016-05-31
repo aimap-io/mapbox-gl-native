@@ -12,7 +12,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.Toast;
-
 import com.mapbox.mapboxsdk.camera.CameraPosition;
 import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
 import com.mapbox.mapboxsdk.constants.Style;
@@ -27,11 +26,10 @@ import com.mapbox.mapboxsdk.offline.OfflineRegionError;
 import com.mapbox.mapboxsdk.offline.OfflineRegionStatus;
 import com.mapbox.mapboxsdk.offline.OfflineTilePyramidRegionDefinition;
 import com.mapbox.mapboxsdk.testapp.R;
+import com.mapbox.mapboxsdk.testapp.model.constants.AppConstant;
 import com.mapbox.mapboxsdk.testapp.model.other.OfflineDownloadRegionDialog;
 import com.mapbox.mapboxsdk.testapp.model.other.OfflineListRegionsDialog;
-
 import org.json.JSONObject;
-
 import java.util.ArrayList;
 
 public class OfflineActivity extends AppCompatActivity
@@ -76,8 +74,7 @@ public class OfflineActivity extends AppCompatActivity
 
         // Set up map
         mMapView = (MapView) findViewById(R.id.mapView);
-        mMapView.setAccessToken(getString(R.string.mapbox_access_token));
-        mMapView.setStyle(Style.MAPBOX_STREETS);
+        mMapView.setStyleUrl(Style.getMapboxStreetsUrl(AppConstant.STYLE_VERSION));
         mMapView.onCreate(savedInstanceState);
         mMapView.getMapAsync(new OnMapReadyCallback() {
             @Override
@@ -118,7 +115,6 @@ public class OfflineActivity extends AppCompatActivity
 
         // Set up the OfflineManager
         mOfflineManager = OfflineManager.getInstance(this);
-        mOfflineManager.setAccessToken(getString(R.string.mapbox_access_token));
     }
 
     @Override

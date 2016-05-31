@@ -10,9 +10,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -60,12 +58,14 @@ import android.widget.ZoomButtonsController;
 import com.almeros.android.multitouch.gesturedetectors.RotateGestureDetector;
 import com.almeros.android.multitouch.gesturedetectors.ShoveGestureDetector;
 import com.almeros.android.multitouch.gesturedetectors.TwoFingerGestureDetector;
+import com.mapbox.mapboxsdk.MapboxAccountManager;
 import com.mapbox.mapboxsdk.R;
 import com.mapbox.mapboxsdk.annotations.Annotation;
 import com.mapbox.mapboxsdk.annotations.Icon;
 import com.mapbox.mapboxsdk.annotations.IconFactory;
 import com.mapbox.mapboxsdk.annotations.InfoWindow;
 import com.mapbox.mapboxsdk.annotations.Marker;
+import com.mapbox.mapboxsdk.annotations.MarkerView;
 import com.mapbox.mapboxsdk.annotations.Polygon;
 import com.mapbox.mapboxsdk.annotations.Polyline;
 import com.mapbox.mapboxsdk.camera.CameraPosition;
@@ -75,8 +75,6 @@ import com.mapbox.mapboxsdk.constants.MyBearingTracking;
 import com.mapbox.mapboxsdk.constants.MyLocationTracking;
 import com.mapbox.mapboxsdk.constants.Style;
 import com.mapbox.mapboxsdk.exceptions.IconBitmapChangedException;
-import com.mapbox.mapboxsdk.exceptions.InvalidAccessTokenException;
-import com.mapbox.mapboxsdk.exceptions.TelemetryServiceNotConfiguredException;
 import com.mapbox.mapboxsdk.geometry.LatLng;
 import com.mapbox.mapboxsdk.geometry.LatLngBounds;
 import com.mapbox.mapboxsdk.layers.CustomLayer;
@@ -112,12 +110,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * </p>
  * <strong>Warning:</strong> Please note that you are responsible for getting permission to use the map data,
  * and for ensuring your use adheres to the relevant terms of use.
- *
- * @see MapView#setAccessToken(String)
  */
 public class MapView extends FrameLayout {
 
     private MapboxMap mMapboxMap;
+    private boolean mInitialLoad;
+    private boolean mDestroyed;
 
     private List<Icon> mIcons;
     private int mAverageIconHeight;
@@ -152,11 +150,9 @@ public class MapView extends FrameLayout {
     private int mContentPaddingRight;
     private int mContentPaddingBottom;
 
-    private String mStyleUrl;
+    private StyleInitializer mStyleInitializer;
 
     private List<OnMapReadyCallback> mOnMapReadyCallbackList;
-    private boolean mInitialLoad;
-    private boolean mDestroyed;
 
     @UiThread
     public MapView(@NonNull Context context) {
@@ -188,6 +184,7 @@ public class MapView extends FrameLayout {
         mOnMapChangedListener = new CopyOnWriteArrayList<>();
         mMapboxMap = new MapboxMap(this);
         mIcons = new ArrayList<>();
+        mStyleInitializer = new StyleInitializer(context);
         View view = LayoutInflater.from(context).inflate(R.layout.mapview_internal, this);
 
         if (!isInEditMode()) {
@@ -257,14 +254,21 @@ public class MapView extends FrameLayout {
             mMapboxMap.moveCamera(CameraUpdateFactory.newCameraPosition(position));
         }
 
-        String accessToken = options.getAccessToken();
-        if (!TextUtils.isEmpty(accessToken)) {
-            mMapboxMap.setAccessToken(accessToken);
+        String accessToken = null;
+        if (MapboxAccountManager.getInstance() != null) {
+            accessToken = MapboxAccountManager.getInstance().getAccessToken();
+        } else {
+            accessToken = options.getAccessToken();
         }
 
         String style = options.getStyle();
-        if (!TextUtils.isEmpty(style)) {
-            mMapboxMap.setStyleUrl(style);
+        if (!TextUtils.isEmpty(accessToken)) {
+            mMapboxMap.setAccessToken(accessToken);
+            if (style != null) {
+                setStyleUrl(style);
+            }
+        } else {
+            mStyleInitializer.setStyle(style, true);
         }
 
         // MyLocationView
@@ -353,7 +357,7 @@ public class MapView extends FrameLayout {
     @UiThread
     public void onCreate(@Nullable Bundle savedInstanceState) {
         // Force a check for an access token
-        validateAccessToken(getAccessToken());
+        MapboxAccountManager.validateAccessToken(getAccessToken());
 
         if (savedInstanceState != null && savedInstanceState.getBoolean(MapboxConstants.STATE_HAS_SAVED_STATE)) {
 
@@ -400,7 +404,6 @@ public class MapView extends FrameLayout {
 
             mMapboxMap.setDebugActive(savedInstanceState.getBoolean(MapboxConstants.STATE_DEBUG_ACTIVE));
             mMapboxMap.setStyleUrl(savedInstanceState.getString(MapboxConstants.STATE_STYLE_URL));
-            setAccessToken(savedInstanceState.getString(MapboxConstants.STATE_ACCESS_TOKEN));
 
             // User location
             try {
@@ -416,10 +419,8 @@ public class MapView extends FrameLayout {
             //noinspection ResourceType
             trackingSettings.setMyBearingTrackingMode(savedInstanceState.getInt(MapboxConstants.STATE_MY_BEARING_TRACKING_MODE, MyBearingTracking.NONE));
         } else if (savedInstanceState == null) {
-            // Force a check for Telemetry
-            validateTelemetryServiceConfigured();
-
             // Start Telemetry (authorization determined in initial MapboxEventManager constructor)
+            Log.i(MapView.class.getCanonicalName(), "MapView start Telemetry...");
             MapboxEventManager eventManager = MapboxEventManager.getMapboxEventManager();
             eventManager.initialize(getContext(), getAccessToken());
         }
@@ -432,7 +433,7 @@ public class MapView extends FrameLayout {
         addOnMapChangedListener(new OnMapChangedListener() {
             @Override
             public void onMapChanged(@MapChange int change) {
-                if (change == DID_FINISH_RENDERING_MAP_FULLY_RENDERED && mInitialLoad) {
+                if (change == WILL_START_RENDERING_MAP && mInitialLoad) {
                     mInitialLoad = false;
                     reloadIcons();
                     reloadMarkers();
@@ -445,6 +446,8 @@ public class MapView extends FrameLayout {
                             iterator.remove();
                         }
                     }
+                } else if (change == REGION_IS_CHANGING || change == REGION_DID_CHANGE || change == DID_FINISH_LOADING_MAP) {
+                    mMapboxMap.getMarkerViewManager().scheduleViewMarkerInvalidation();
                 }
             }
         });
@@ -470,8 +473,7 @@ public class MapView extends FrameLayout {
         outState.putBoolean(MapboxConstants.STATE_HAS_SAVED_STATE, true);
         outState.putParcelable(MapboxConstants.STATE_CAMERA_POSITION, mMapboxMap.getCameraPosition());
         outState.putBoolean(MapboxConstants.STATE_DEBUG_ACTIVE, mMapboxMap.isDebugActive());
-        outState.putString(MapboxConstants.STATE_STYLE_URL, mStyleUrl);
-        outState.putString(MapboxConstants.STATE_ACCESS_TOKEN, mMapboxMap.getAccessToken());
+        outState.putString(MapboxConstants.STATE_STYLE_URL, mStyleInitializer.getStyle());
         outState.putBoolean(MapboxConstants.STATE_MY_LOCATION_ENABLED, mMapboxMap.isMyLocationEnabled());
 
         // TrackingSettings
@@ -553,9 +555,9 @@ public class MapView extends FrameLayout {
         mNativeMapView.update();
         mMyLocationView.onResume();
 
-        if (mStyleUrl == null) {
+        if (mStyleInitializer.isDefaultStyle()) {
             // user has failed to supply a style url
-            setStyleUrl(Style.MAPBOX_STREETS);
+            setStyleUrl(mStyleInitializer.getStyle());
         }
     }
 
@@ -598,13 +600,9 @@ public class MapView extends FrameLayout {
         return mNativeMapView.getPitch();
     }
 
-    void setTilt(Double pitch, @Nullable Long duration) {
-        long actualDuration = 0;
-        if (duration != null) {
-            actualDuration = duration;
-        }
+    void setTilt(Double pitch) {
         mMyLocationView.setTilt(pitch);
-        mNativeMapView.setPitch(pitch, actualDuration);
+        mNativeMapView.setPitch(pitch, 0);
     }
 
 
@@ -672,6 +670,14 @@ public class MapView extends FrameLayout {
 
     int getContentPaddingBottom() {
         return mContentPaddingBottom;
+    }
+
+    int getContentWidth(){
+        return getWidth() - mContentPaddingLeft - mContentPaddingRight;
+    }
+
+    int getContentHeight(){
+        return getHeight() - mContentPaddingBottom - mContentPaddingTop;
     }
 
     //
@@ -777,7 +783,7 @@ public class MapView extends FrameLayout {
      * <li>{@code asset://...}:
      * reads the style from the APK {@code assets/} directory.
      * This is used to load a style bundled with your app.</li>
-     * <li>{@code null}: loads the default {@link Style#MAPBOX_STREETS} style.</li>
+     * <li>{@code null}: loads the default {@link Style#getMapboxStreetsUrl(int)} style.</li>
      * </ul>
      * <p>
      * This method is asynchronous and will return immediately before the style finishes loading.
@@ -793,7 +799,7 @@ public class MapView extends FrameLayout {
         if (mDestroyed) {
             return;
         }
-        mStyleUrl = url;
+        mStyleInitializer.setStyle(url);
         mNativeMapView.setStyleUrl(url);
     }
 
@@ -827,7 +833,7 @@ public class MapView extends FrameLayout {
     @UiThread
     @NonNull
     public String getStyleUrl() {
-        return mStyleUrl;
+        return mStyleInitializer.getStyle();
     }
 
     //
@@ -836,8 +842,11 @@ public class MapView extends FrameLayout {
 
     /**
      * <p>
-     * Sets the current Mapbox access token used to load map styles and tiles.
+     * DEPRECATED @see MapboxAccountManager#start(String)
      * </p>
+     * <p>
+     * <p>
+     * Sets the current Mapbox access token used to load map styles and tiles.
      * <p>
      * You must set a valid access token before you call {@link MapView#onCreate(Bundle)}
      * or an exception will be thrown.
@@ -845,7 +854,9 @@ public class MapView extends FrameLayout {
      *
      * @param accessToken Your public Mapbox access token.
      * @see MapView#onCreate(Bundle)
+     * @deprecated As of release 4.1.0, replaced by {@link com.mapbox.mapboxsdk.MapboxAccountManager#start(Context, String)}
      */
+    @Deprecated
     @UiThread
     public void setAccessToken(@NonNull String accessToken) {
         if (mDestroyed) {
@@ -855,15 +866,22 @@ public class MapView extends FrameLayout {
         if (!TextUtils.isEmpty(accessToken)) {
             accessToken = accessToken.trim();
         }
-        validateAccessToken(accessToken);
+        MapboxAccountManager.validateAccessToken(accessToken);
         mNativeMapView.setAccessToken(accessToken);
     }
 
     /**
+     * <p>
+     * DEPRECATED @see MapboxAccountManager#getAccessToken()
+     * </p>
+     * <p/>
      * Returns the current Mapbox access token used to load map styles and tiles.
+     * </p>
      *
      * @return The current Mapbox access token.
+     * @deprecated As of release 4.1.0, replaced by {@link MapboxAccountManager#getAccessToken()}
      */
+    @Deprecated
     @UiThread
     @Nullable
     public String getAccessToken() {
@@ -871,31 +889,6 @@ public class MapView extends FrameLayout {
             return "";
         }
         return mNativeMapView.getAccessToken();
-    }
-
-    // Checks if the given token is valid
-    private void validateAccessToken(String accessToken) {
-        if (TextUtils.isEmpty(accessToken) || (!accessToken.startsWith("pk.") && !accessToken.startsWith("sk."))) {
-            throw new InvalidAccessTokenException();
-        }
-    }
-
-    // Checks that TelemetryService has been configured by developer
-    private void validateTelemetryServiceConfigured() {
-        try {
-            // Check Implementing app's AndroidManifest.xml
-            PackageInfo packageInfo = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), PackageManager.GET_SERVICES);
-            if (packageInfo.services != null) {
-                for (ServiceInfo service : packageInfo.services) {
-                    if (TextUtils.equals("com.mapbox.mapboxsdk.telemetry.TelemetryService", service.name)) {
-                        return;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.w(MapboxConstants.TAG, "Error checking for Telemetry Service Config: " + e);
-        }
-        throw new TelemetryServiceNotConfiguredException();
     }
 
     //
@@ -1028,6 +1021,9 @@ public class MapView extends FrameLayout {
     }
 
     long addMarker(@NonNull Marker marker) {
+        if(mDestroyed){
+            return 0l;
+        }
         return mNativeMapView.addMarker(marker);
     }
 
@@ -1080,7 +1076,7 @@ public class MapView extends FrameLayout {
         mNativeMapView.removeAnnotations(ids);
     }
 
-    private List<Marker> getMarkersInBounds(@NonNull LatLngBounds bbox) {
+    List<Marker> getMarkersInBounds(@NonNull LatLngBounds bbox) {
         if (mDestroyed || bbox == null) {
             return new ArrayList<>();
         }
@@ -1105,6 +1101,33 @@ public class MapView extends FrameLayout {
 
         return new ArrayList<>(annotations);
     }
+
+    public List<MarkerView> getMarkerViewsInBounds(@NonNull LatLngBounds bbox) {
+        if (mDestroyed || bbox == null) {
+            return new ArrayList<>();
+        }
+
+        // TODO: filter in JNI using C++ parameter to getAnnotationsInBounds
+        long[] ids = mNativeMapView.getAnnotationsInBounds(bbox);
+
+        List<Long> idsList = new ArrayList<>(ids.length);
+        for (int i = 0; i < ids.length; i++) {
+            idsList.add(ids[i]);
+        }
+
+        List<MarkerView> annotations = new ArrayList<>(ids.length);
+        List<Annotation> annotationList = mMapboxMap.getAnnotations();
+        int count = annotationList.size();
+        for (int i = 0; i < count; i++) {
+            Annotation annotation = annotationList.get(i);
+            if (annotation instanceof MarkerView && idsList.contains(annotation.getId())) {
+                annotations.add((MarkerView) annotation);
+            }
+        }
+
+        return new ArrayList<>(annotations);
+    }
+
 
     int getTopOffsetPixelsForIcon(Icon icon) {
         if (mDestroyed) {
@@ -1162,7 +1185,7 @@ public class MapView extends FrameLayout {
         mNativeMapView.jumpTo(bearing, center, pitch, zoom);
     }
 
-    void easeTo(double bearing, LatLng center, long duration, double pitch, double zoom, @Nullable final MapboxMap.CancelableCallback cancelableCallback) {
+    void easeTo(double bearing, LatLng center, long duration, double pitch, double zoom, boolean easingInterpolator, @Nullable final MapboxMap.CancelableCallback cancelableCallback) {
         if (mDestroyed) {
             return;
         }
@@ -1183,7 +1206,7 @@ public class MapView extends FrameLayout {
             });
         }
 
-        mNativeMapView.easeTo(bearing, center, duration, pitch, zoom);
+        mNativeMapView.easeTo(bearing, center, duration, pitch, zoom, easingInterpolator);
     }
 
     void flyTo(double bearing, LatLng center, long duration, double pitch, double zoom, @Nullable final MapboxMap.CancelableCallback cancelableCallback) {
@@ -1298,6 +1321,10 @@ public class MapView extends FrameLayout {
     private class SurfaceTextureListener implements TextureView.SurfaceTextureListener {
 
         private Surface mSurface;
+        private View mViewHolder;
+
+        private static final int VIEW_MARKERS_POOL_SIZE = 20;
+
 
         // Called when the native surface texture has been created
         // Must do all EGL/GL ES initialization here
@@ -1305,7 +1332,6 @@ public class MapView extends FrameLayout {
         public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
             mNativeMapView.createSurface(mSurface = new Surface(surface));
             mNativeMapView.resizeFramebuffer(width, height);
-
             mHasSurface = true;
         }
 
@@ -1343,6 +1369,8 @@ public class MapView extends FrameLayout {
 
             mCompassView.update(getDirection());
             mMyLocationView.update();
+            mMapboxMap.getMarkerViewManager().update();
+
             for (InfoWindow infoWindow : mMapboxMap.getInfoWindows()) {
                 infoWindow.update();
             }
@@ -1635,7 +1663,10 @@ public class MapView extends FrameLayout {
                     if (annotation instanceof Marker) {
                         if (annotation.getId() == newSelectedMarkerId) {
                             if (selectedMarkers.isEmpty() || !selectedMarkers.contains(annotation)) {
-                                mMapboxMap.selectMarker((Marker) annotation);
+                                // only handle click if no marker view is available
+                                if (!(annotation instanceof MarkerView)) {
+                                    mMapboxMap.selectMarker((Marker) annotation);
+                                }
                             }
                             break;
                         }
@@ -1955,7 +1986,7 @@ public class MapView extends FrameLayout {
             pitch = Math.max(MapboxConstants.MINIMUM_TILT, Math.min(MapboxConstants.MAXIMUM_TILT, pitch));
 
             // Tilt the map
-            setTilt(pitch, null);
+            mMapboxMap.setTilt(pitch);
 
             return true;
         }
@@ -2665,6 +2696,41 @@ public class MapView extends FrameLayout {
         public void run() {
             // invalidate camera position
             mapboxMap.getCameraPosition();
+        }
+    }
+
+    /**
+     * Class responsible for managing state of Style loading.
+     */
+    static class StyleInitializer {
+
+        private String mStyle;
+        private boolean mDefaultStyle;
+
+        StyleInitializer(@NonNull Context context) {
+            mStyle = Style.getMapboxStreetsUrl(context.getResources().getInteger(R.integer.style_version));
+            mDefaultStyle = true;
+        }
+
+        void setStyle(@NonNull String style) {
+            setStyle(style, false);
+        }
+
+        void setStyle(@NonNull String style, boolean defaultStyle) {
+            if (style == null) {
+                // don't override default style
+                return;
+            }
+            mStyle = style;
+            mDefaultStyle = defaultStyle;
+        }
+
+        public String getStyle() {
+            return mStyle;
+        }
+
+        boolean isDefaultStyle() {
+            return mDefaultStyle;
         }
     }
 

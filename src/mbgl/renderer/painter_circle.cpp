@@ -3,15 +3,13 @@
 
 #include <mbgl/layer/circle_layer.hpp>
 
-#include <mbgl/map/tile_id.hpp>
-
 #include <mbgl/shader/circle_shader.hpp>
 
 using namespace mbgl;
 
 void Painter::renderCircle(CircleBucket& bucket,
                            const CircleLayer& layer,
-                           const TileID& id,
+                           const UnwrappedTileID& tileID,
                            const mat4& matrix) {
     // Abort early.
     if (pass == RenderPass::Opaque) return;
@@ -23,13 +21,8 @@ void Painter::renderCircle(CircleBucket& bucket,
     setDepthSublayer(0);
 
     const CirclePaintProperties& properties = layer.paint;
-    mat4 vtxMatrix = translatedMatrix(matrix, properties.circleTranslate, id, properties.circleTranslateAnchor);
-
-    Color color = properties.circleColor;
-    color[0] *= properties.circleOpacity;
-    color[1] *= properties.circleOpacity;
-    color[2] *= properties.circleOpacity;
-    color[3] *= properties.circleOpacity;
+    mat4 vtxMatrix = translatedMatrix(matrix, properties.circleTranslate, tileID,
+                                      properties.circleTranslateAnchor);
 
     // Antialiasing factor: this is a minimum blur distance that serves as
     // a faux-antialiasing for the circle. since blur is a ratio of the circle's
@@ -41,7 +34,8 @@ void Painter::renderCircle(CircleBucket& bucket,
 
     circleShader->u_matrix = vtxMatrix;
     circleShader->u_exmatrix = extrudeMatrix;
-    circleShader->u_color = color;
+    circleShader->u_color = properties.circleColor;
+    circleShader->u_opacity = properties.circleOpacity;
     circleShader->u_blur = std::max<float>(properties.circleBlur, antialiasing);
     circleShader->u_size = properties.circleRadius;
 

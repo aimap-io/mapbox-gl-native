@@ -3,11 +3,10 @@
 #import "MBXAppDelegate.h"
 #import "MBXCustomCalloutView.h"
 #import "MBXOfflinePacksTableViewController.h"
+#import "MBXAnnotationView.h"
 
 #import <Mapbox/Mapbox.h>
 
-#import <CoreLocation/CoreLocation.h>
-#import <OpenGLES/ES2/gl.h>
 #import <objc/runtime.h>
 
 static const CLLocationCoordinate2D WorldTourDestinations[] = {
@@ -16,6 +15,8 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     { .latitude = 12.9810816, .longitude = 77.6368034 },
     { .latitude = -13.15589555, .longitude = -74.2178961777998 },
 };
+
+static NSString * const MBXViewControllerAnnotationViewReuseIdentifer = @"MBXViewControllerAnnotationViewReuseIdentifer";
 
 @interface MBXDroppedPinAnnotation : MGLPointAnnotation
 @end
@@ -33,13 +34,13 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 
 @property (nonatomic) IBOutlet MGLMapView *mapView;
 @property (nonatomic) NSInteger styleIndex;
+@property (nonatomic) BOOL debugLoggingEnabled;
 
 @end
 
 @implementation MBXViewController
 {
     BOOL _isTouringWorld;
-    BOOL _isShowingCustomStyleLayer;
 }
 
 #pragma mark - Setup
@@ -65,6 +66,8 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState:) name:UIApplicationWillTerminateNotification object:nil];
 
     [self restoreState:nil];
+
+    self.debugLoggingEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"MGLMapboxMetricsDebugLoggingEnabled"];
 }
 
 - (void)viewDidAppear:(BOOL)animated
@@ -178,6 +181,9 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         ((debugMask & MGLMapDebugCollisionBoxesMask)
          ? @"Hide Collision Boxes"
          : @"Show Collision Boxes"),
+        ((debugMask & MGLMapDebugWireframesMask)
+         ? @"Hide Wireframes"
+         : @"Show Wireframes"),
         @"Add 100 Points",
         @"Add 1,000 Points",
         @"Add 10,000 Points",
@@ -185,12 +191,13 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         @"Start World Tour",
         @"Add Custom Callout Point",
         @"Remove Annotations",
-        (_isShowingCustomStyleLayer
-         ? @"Hide Custom Style Layer"
-         : @"Show Custom Style Layer"),
-        @"Print Telemetry Logfile",
-        @"Delete Telemetry Logfile",
         nil];
+
+    if (self.debugLoggingEnabled)
+    {
+        [sheet addButtonWithTitle:@"Print Telemetry Logfile"];
+        [sheet addButtonWithTitle:@"Delete Telemetry Logfile"];
+    }
 
     [sheet showFromBarButtonItem:self.navigationItem.leftBarButtonItem animated:YES];
 }
@@ -219,17 +226,21 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 5)
     {
-        [self parseFeaturesAddingCount:100];
+        self.mapView.debugMask ^= MGLMapDebugWireframesMask;
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 6)
     {
-        [self parseFeaturesAddingCount:1000];
+        [self parseFeaturesAddingCount:100];
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 7)
     {
-        [self parseFeaturesAddingCount:10000];
+        [self parseFeaturesAddingCount:1000];
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 8)
+    {
+        [self parseFeaturesAddingCount:10000];
+    }
+    else if (buttonIndex == actionSheet.firstOtherButtonIndex + 9)
     {
         // PNW triangle
         //
@@ -295,36 +306,41 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 
             free(polygonCoordinates);
         }
-    }
-    else if (buttonIndex == actionSheet.firstOtherButtonIndex + 9)
-    {
-        [self startWorldTour:actionSheet];
+        
+        CLLocationCoordinate2D innerCoordinates[] = {
+            CLLocationCoordinate2DMake(-5, -5),
+            CLLocationCoordinate2DMake(-5, 5),
+            CLLocationCoordinate2DMake(5, 5),
+            CLLocationCoordinate2DMake(5, -5),
+        };
+        MGLPolygon *innerPolygon = [MGLPolygon polygonWithCoordinates:innerCoordinates count:sizeof(innerCoordinates) / sizeof(innerCoordinates[0])];
+        CLLocationCoordinate2D outerCoordinates[] = {
+            CLLocationCoordinate2DMake(-10, -20),
+            CLLocationCoordinate2DMake(-10, 10),
+            CLLocationCoordinate2DMake(10, 10),
+            CLLocationCoordinate2DMake(10, -10),
+        };
+        MGLPolygon *outerPolygon = [MGLPolygon polygonWithCoordinates:outerCoordinates count:sizeof(outerCoordinates) / sizeof(outerCoordinates[0]) interiorPolygons:@[innerPolygon]];
+        [self.mapView addAnnotation:outerPolygon];
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 10)
     {
-        [self presentAnnotationWithCustomCallout];
+        [self startWorldTour:actionSheet];
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 11)
     {
-        [self.mapView removeAnnotations:self.mapView.annotations];
+        [self presentAnnotationWithCustomCallout];
     }
     else if (buttonIndex == actionSheet.firstOtherButtonIndex + 12)
     {
-        if (_isShowingCustomStyleLayer)
-        {
-            [self removeCustomStyleLayer];
-        }
-        else
-        {
-            [self insertCustomStyleLayer];
-        }
+        [self.mapView removeAnnotations:self.mapView.annotations];
     }
-    else if (buttonIndex == actionSheet.firstOtherButtonIndex + 13)
+    else if (buttonIndex == actionSheet.numberOfButtons - 2 && self.debugLoggingEnabled)
     {
         NSString *fileContents = [NSString stringWithContentsOfFile:[self telemetryDebugLogfilePath] encoding:NSUTF8StringEncoding error:nil];
         NSLog(@"%@", fileContents);
     }
-    else if (buttonIndex == actionSheet.firstOtherButtonIndex + 14)
+    else if (buttonIndex == actionSheet.numberOfButtons - 1 && self.debugLoggingEnabled)
     {
         NSString *filePath = [self telemetryDebugLogfilePath];
         if ([[NSFileManager defaultManager] isDeletableFileAtPath:filePath]) {
@@ -379,67 +395,6 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     });
 }
 
-- (void)insertCustomStyleLayer
-{
-    _isShowingCustomStyleLayer = YES;
-
-    static const GLchar *vertexShaderSource = "attribute vec2 a_pos; void main() { gl_Position = vec4(a_pos, 0, 1); }";
-    static const GLchar *fragmentShaderSource = "void main() { gl_FragColor = vec4(0, 1, 0, 1); }";
-    
-    __block GLuint program = 0;
-    __block GLuint vertexShader = 0;
-    __block GLuint fragmentShader = 0;
-    __block GLuint buffer = 0;
-    __block GLuint a_pos = 0;
-    [self.mapView insertCustomStyleLayerWithIdentifier:@"mbx-custom" preparationHandler:^{
-        program = glCreateProgram();
-        vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-        
-        glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-        glCompileShader(vertexShader);
-        glAttachShader(program, vertexShader);
-        glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-        glCompileShader(fragmentShader);
-        glAttachShader(program, fragmentShader);
-        glLinkProgram(program);
-        a_pos = glGetAttribLocation(program, "a_pos");
-        
-        GLfloat background[] = { -1,-1, 1,-1, -1,1, 1,1 };
-        glGenBuffers(1, &buffer);
-        glBindBuffer(GL_ARRAY_BUFFER, buffer);
-        glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(GLfloat), background, GL_STATIC_DRAW);
-    } drawingHandler:^(__unused CGSize size,
-                       __unused CLLocationCoordinate2D centerCoordinate,
-                       __unused double zoomLevel,
-                       __unused CLLocationDirection direction,
-                       __unused CGFloat pitch,
-                       __unused CGFloat perspectiveSkew) {
-        glUseProgram(program);
-        glBindBuffer(GL_ARRAY_BUFFER, buffer);
-        glEnableVertexAttribArray(a_pos);
-        glVertexAttribPointer(a_pos, 2, GL_FLOAT, GL_FALSE, 0, NULL);
-        glDisable(GL_STENCIL_TEST);
-        glDisable(GL_DEPTH_TEST);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    } completionHandler:^{
-        if (program) {
-            glDeleteBuffers(1, &buffer);
-            glDetachShader(program, vertexShader);
-            glDetachShader(program, fragmentShader);
-            glDeleteShader(vertexShader);
-            glDeleteShader(fragmentShader);
-            glDeleteProgram(program);
-        }
-    } belowStyleLayerWithIdentifier:@"housenum-label"];
-}
-
-- (void)removeCustomStyleLayer
-{
-    _isShowingCustomStyleLayer = NO;
-    [self.mapView removeCustomStyleLayerWithIdentifier:@"mbx-custom"];
-}
-
 - (void)presentAnnotationWithCustomCallout
 {
     [self.mapView removeAnnotations:self.mapView.annotations];
@@ -456,13 +411,22 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 {
     if (longPress.state == UIGestureRecognizerStateBegan)
     {
-        MBXDroppedPinAnnotation *point = [[MBXDroppedPinAnnotation alloc] init];
-        point.coordinate = [self.mapView convertPoint:[longPress locationInView:longPress.view]
+        CGPoint point = [longPress locationInView:longPress.view];
+        NSArray *features = [self.mapView visibleFeaturesAtPoint:point];
+        NSString *title;
+        for (id <MGLFeature> feature in features) {
+            if (!title) {
+                title = [feature attributeForKey:@"name_en"] ?: [feature attributeForKey:@"name"];
+            }
+        }
+        
+        MBXDroppedPinAnnotation *pin = [[MBXDroppedPinAnnotation alloc] init];
+        pin.coordinate = [self.mapView convertPoint:point
                                  toCoordinateFromView:self.mapView];
-        point.title = @"Dropped Pin";
-        point.subtitle = [[[MGLCoordinateFormatter alloc] init] stringFromCoordinate:point.coordinate];
-        [self.mapView addAnnotation:point];
-        [self.mapView selectAnnotation:point animated:YES];
+        pin.title = title ?: @"Dropped Pin";
+        pin.subtitle = [[[MGLCoordinateFormatter alloc] init] stringFromCoordinate:pin.coordinate];
+        // Calling `addAnnotation:` on mapView is not required since `selectAnnotation:animated` has the side effect of adding the annotation if required
+        [self.mapView selectAnnotation:pin animated:YES];
     }
 }
 
@@ -475,19 +439,19 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     dispatch_once(&onceToken, ^{
         styleNames = @[
             @"Streets",
-            @"Emerald",
+            @"Outdoors",
             @"Light",
             @"Dark",
             @"Satellite",
-            @"Hybrid",
+            @"Satellite Streets",
         ];
         styleURLs = @[
-            [MGLStyle streetsStyleURL],
-            [MGLStyle emeraldStyleURL],
-            [MGLStyle lightStyleURL],
-            [MGLStyle darkStyleURL],
-            [MGLStyle satelliteStyleURL],
-            [MGLStyle hybridStyleURL],
+            [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion],
+            [MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion],
+            [MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion],
+            [MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion],
+            [MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion],
+            [MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion],
         ];
         NSAssert(styleNames.count == styleURLs.count, @"Style names and URLs don’t match.");
         
@@ -497,10 +461,10 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         unsigned numStyleURLMethods = 0;
         for (NSUInteger i = 0; i < numMethods; i++) {
             Method method = methods[i];
-            if (method_getNumberOfArguments(method) == 2 /* _cmd, self */) {
+            if (method_getNumberOfArguments(method) == 3 /* _cmd, self, version */) {
                 SEL selector = method_getName(method);
                 NSString *name = @(sel_getName(selector));
-                if ([name rangeOfString:@"StyleURL"].location != NSNotFound) {
+                if ([name hasSuffix:@"StyleURLWithVersion:"]) {
                     numStyleURLMethods += 1;
                 }
             }
@@ -607,6 +571,23 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 }
 
 #pragma mark - MGLMapViewDelegate
+
+- (MGLAnnotationView *)mapView:(MGLMapView *)mapView viewForAnnotation:(id<MGLAnnotation>)annotation
+{
+    MBXAnnotationView *annotationView = (MBXAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:MBXViewControllerAnnotationViewReuseIdentifer];
+    if (!annotationView)
+    {
+        annotationView = [[MBXAnnotationView alloc] initWithReuseIdentifier:MBXViewControllerAnnotationViewReuseIdentifer];
+        annotationView.frame = CGRectMake(0, 0, 40, 40);
+        annotationView.centerColor = [UIColor whiteColor];
+        annotationView.flat = YES;
+        annotationView.scalesWithViewingDistance = YES;
+    } else {
+        // orange indicates that the annotation view was reused
+        annotationView.centerColor = [UIColor orangeColor];
+    }
+    return annotationView;
+}
 
 - (MGLAnnotationImage *)mapView:(MGLMapView * __nonnull)mapView imageForAnnotation:(id <MGLAnnotation> __nonnull)annotation
 {

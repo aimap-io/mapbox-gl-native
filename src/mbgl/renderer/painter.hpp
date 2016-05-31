@@ -1,7 +1,8 @@
-#ifndef MBGL_RENDERER_PAINTER
-#define MBGL_RENDERER_PAINTER
+#pragma once
 
 #include <mbgl/map/transform_state.hpp>
+
+#include <mbgl/tile/tile_id.hpp>
 
 #include <mbgl/renderer/frame_history.hpp>
 #include <mbgl/renderer/bucket.hpp>
@@ -11,8 +12,8 @@
 
 #include <mbgl/gl/gl_config.hpp>
 
+#include <mbgl/style/render_item.hpp>
 #include <mbgl/style/types.hpp>
-#include <mbgl/style/style.hpp>
 
 #include <mbgl/gl/gl.hpp>
 
@@ -64,7 +65,6 @@ class IconShader;
 class RasterShader;
 class SDFGlyphShader;
 class SDFIconShader;
-class DotShader;
 class CollisionBoxShader;
 
 struct ClipID;
@@ -97,24 +97,29 @@ public:
     // Renders the red debug frame around a tile, visualizing its perimeter.
     void renderDebugFrame(const mat4 &matrix);
 
+    void renderClipMasks();
+
     void renderDebugText(TileData&, const mat4&);
-    void renderFill(FillBucket&, const FillLayer&, const TileID&, const mat4&);
-    void renderLine(LineBucket&, const LineLayer&, const TileID&, const mat4&);
-    void renderCircle(CircleBucket&, const CircleLayer&, const TileID&, const mat4&);
-    void renderSymbol(SymbolBucket&, const SymbolLayer&, const TileID&, const mat4&);
-    void renderRaster(RasterBucket&, const RasterLayer&, const TileID&, const mat4&);
+    void renderFill(FillBucket&, const FillLayer&, const UnwrappedTileID&, const mat4&);
+    void renderLine(LineBucket&, const LineLayer&, const UnwrappedTileID&, const mat4&);
+    void renderCircle(CircleBucket&, const CircleLayer&, const UnwrappedTileID&, const mat4&);
+    void renderSymbol(SymbolBucket&, const SymbolLayer&, const UnwrappedTileID&, const mat4&);
+    void renderRaster(RasterBucket&, const RasterLayer&, const UnwrappedTileID&, const mat4&);
     void renderBackground(const BackgroundLayer&);
 
     float saturationFactor(float saturation);
     float contrastFactor(float contrast);
     std::array<float, 3> spinWeights(float spin_value);
 
-    void drawClippingMasks(const std::map<TileID, ClipID>&);
+    void drawClippingMasks(const std::map<UnwrappedTileID, ClipID>&);
 
     bool needsAnimation() const;
 
 private:
-    mat4 translatedMatrix(const mat4& matrix, const std::array<float, 2> &translation, const TileID &id, TranslateAnchorType anchor);
+    mat4 translatedMatrix(const mat4& matrix,
+                          const std::array<float, 2>& translation,
+                          const UnwrappedTileID& id,
+                          TranslateAnchorType anchor);
 
     std::vector<RenderItem> determineRenderOrder(const Style& style);
 
@@ -126,7 +131,7 @@ private:
     void setClipping(const ClipID&);
 
     void renderSDF(SymbolBucket &bucket,
-                   const TileID &id,
+                   const UnwrappedTileID &tileID,
                    const mat4 &matrixSymbol,
                    float scaleDivisor,
                    std::array<float, 2> texsize,
@@ -200,7 +205,6 @@ private:
     std::unique_ptr<RasterShader> rasterShader;
     std::unique_ptr<SDFGlyphShader> sdfGlyphShader;
     std::unique_ptr<SDFIconShader> sdfIconShader;
-    std::unique_ptr<DotShader> dotShader;
     std::unique_ptr<CollisionBoxShader> collisionBoxShader;
     std::unique_ptr<CircleShader> circleShader;
 
@@ -235,5 +239,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

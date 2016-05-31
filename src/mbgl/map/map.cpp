@@ -7,9 +7,11 @@
 #include <mbgl/annotation/shape_annotation.hpp>
 #include <mbgl/annotation/annotation_manager.hpp>
 #include <mbgl/style/style.hpp>
+#include <mbgl/style/style_observer.hpp>
 #include <mbgl/style/style_layer.hpp>
 #include <mbgl/style/property_transition.hpp>
 #include <mbgl/style/style_update_parameters.hpp>
+#include <mbgl/style/style_query_parameters.hpp>
 #include <mbgl/layer/custom_layer.hpp>
 #include <mbgl/renderer/painter.hpp>
 #include <mbgl/storage/file_source.hpp>
@@ -32,9 +34,9 @@ enum class RenderState {
     fully
 };
 
-class Map::Impl : public Style::Observer {
+class Map::Impl : public StyleObserver {
 public:
-    Impl(View&, FileSource&, MapMode, GLContextMode, ConstrainMode);
+    Impl(View&, FileSource&, MapMode, GLContextMode, ConstrainMode, ViewportMode);
 
     void onResourceLoaded() override;
     void onResourceError(std::exception_ptr) override;
@@ -76,16 +78,23 @@ public:
     bool loading = false;
 };
 
-Map::Map(View& view, FileSource& fileSource, MapMode mapMode, GLContextMode contextMode, ConstrainMode constrainMode)
-    : impl(std::make_unique<Impl>(view, fileSource, mapMode, contextMode, constrainMode)) {
+Map::Map(View& view, FileSource& fileSource, MapMode mapMode, GLContextMode contextMode, ConstrainMode constrainMode, ViewportMode viewportMode)
+    : impl(std::make_unique<Impl>(view, fileSource, mapMode, contextMode, constrainMode, viewportMode)) {
     view.initialize(this);
     update(Update::Dimensions);
 }
 
-Map::Impl::Impl(View& view_, FileSource& fileSource_, MapMode mode_, GLContextMode contextMode_, ConstrainMode constrainMode_)
+Map::Impl::Impl(View& view_,
+                FileSource& fileSource_,
+                MapMode mode_,
+                GLContextMode contextMode_,
+                ConstrainMode constrainMode_,
+                ViewportMode viewportMode_)
     : view(view_),
       fileSource(fileSource_),
-      transform(view, constrainMode_),
+      transform([this](MapChange change) { view.notifyMapChange(change); },
+                constrainMode_,
+                viewportMode_),
       mode(mode_),
       contextMode(contextMode_),
       pixelRatio(view.getPixelRatio()),
@@ -525,7 +534,7 @@ CameraOptions Map::cameraForLatLngs(const std::vector<LatLng>& latLngs, optional
         };
         centerPixel = centerPixel + paddedNEPixel - paddedSWPixel;
     }
-    centerPixel /= 2;
+    centerPixel /= 2.0;
 
     // CameraOptions origin is at the top-left corner.
     centerPixel.y = viewportHeight - centerPixel.y;
@@ -638,6 +647,17 @@ ConstrainMode Map::getConstrainMode() const {
     return impl->transform.getConstrainMode();
 }
 
+#pragma mark - Viewport mode
+
+void Map::setViewportMode(mbgl::ViewportMode mode) {
+    impl->transform.setViewportMode(mode);
+    update(Update::Repaint);
+}
+
+ViewportMode Map::getViewportMode() const {
+    return impl->transform.getViewportMode();
+}
+
 #pragma mark - Projection
 
 double Map::getMetersPerPixelAtLatitude(double lat, double zoom) const {
@@ -714,36 +734,31 @@ AnnotationIDs Map::getPointAnnotationsInBounds(const LatLngBounds& bounds) {
 
 #pragma mark - Feature query api
 
-std::vector<TileCoordinate> pointsToCoordinates(const std::vector<ScreenCoordinate>& queryPoints, const TransformState& transformState) {
-    std::vector<TileCoordinate> queryGeometry;
-    for (auto& p : queryPoints) {
-        queryGeometry.push_back(TileCoordinate::fromScreenCoordinate(transformState, 0, { p.x, transformState.getHeight() - p.y }));
-    }
-    return queryGeometry;
-}
-
 std::vector<Feature> Map::queryRenderedFeatures(const ScreenCoordinate& point, const optional<std::vector<std::string>>& layerIDs) {
     if (!impl->style) return {};
 
-    auto queryGeometry = pointsToCoordinates({ point }, impl->transform.getState());
-    return impl->style->queryRenderedFeatures(queryGeometry, impl->transform.getZoom(), impl->transform.getAngle(), layerIDs);
+    return impl->style->queryRenderedFeatures({
+        { point },
+        impl->transform.getState(),
+        layerIDs
+    });
 }
 
-std::vector<Feature> Map::queryRenderedFeatures(const std::array<ScreenCoordinate, 2>& box, const optional<std::vector<std::string>>& layerIDs) {
+std::vector<Feature> Map::queryRenderedFeatures(const ScreenBox& box, const optional<std::vector<std::string>>& layerIDs) {
     if (!impl->style) return {};
 
-    std::vector<ScreenCoordinate> queryPoints {
-        { box[0].x, box[0].y },
-            { box[1].x, box[0].y },
-            { box[1].x, box[1].y },
-            { box[0].x, box[1].y },
-            { box[0].x, box[0].y }
-    };
-    auto queryGeometry = pointsToCoordinates(queryPoints, impl->transform.getState());
-
-    return impl->style->queryRenderedFeatures(queryGeometry, impl->transform.getZoom(), impl->transform.getAngle(), layerIDs);
+    return impl->style->queryRenderedFeatures({
+        {
+            box.min,
+            { box.max.x, box.min.y },
+            box.max,
+            { box.min.x, box.max.y },
+            box.min
+        },
+        impl->transform.getState(),
+        layerIDs
+    });
 }
-
 
 #pragma mark - Style API
 
@@ -782,8 +797,17 @@ void Map::setDebug(MapDebugOptions debugOptions) {
 }
 
 void Map::cycleDebugOptions() {
-    if (impl->debugOptions & MapDebugOptions::Collision)
+#ifndef GL_ES_VERSION_2_0
+    if (impl->debugOptions & MapDebugOptions::StencilClip)
         impl->debugOptions = MapDebugOptions::NoDebug;
+    else if (impl->debugOptions & MapDebugOptions::Wireframe)
+        impl->debugOptions = MapDebugOptions::StencilClip;
+#else
+    if (impl->debugOptions & MapDebugOptions::Wireframe)
+        impl->debugOptions = MapDebugOptions::NoDebug;
+#endif // GL_ES_VERSION_2_0
+    else if (impl->debugOptions & MapDebugOptions::Collision)
+        impl->debugOptions = MapDebugOptions::Collision | MapDebugOptions::Wireframe;
     else if (impl->debugOptions & MapDebugOptions::Timestamps)
         impl->debugOptions = impl->debugOptions | MapDebugOptions::Collision;
     else if (impl->debugOptions & MapDebugOptions::ParseStatus)

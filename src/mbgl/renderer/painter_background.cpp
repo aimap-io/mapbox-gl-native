@@ -14,9 +14,12 @@ void Painter::renderBackground(const BackgroundLayer& layer) {
     // glClear rather than this method.
     const BackgroundPaintProperties& properties = layer.paint;
 
-    const bool isPatterned = !properties.backgroundPattern.value.to.empty();// && false;
+    bool isPatterned = !properties.backgroundPattern.value.to.empty();// && false;
     optional<SpriteAtlasPosition> imagePosA;
     optional<SpriteAtlasPosition> imagePosB;
+
+    bool wireframe = frame.debugOptions & MapDebugOptions::Wireframe;
+    isPatterned &= !wireframe;
 
     if (isPatterned) {
         imagePosA = spriteAtlas->getPosition(properties.backgroundPattern.value.from, true);
@@ -38,14 +41,15 @@ void Painter::renderBackground(const BackgroundLayer& layer) {
         backgroundPatternArray.bind(*patternShader, tileStencilBuffer, BUFFER_OFFSET(0), glObjectStore);
 
     } else {
-        Color color = properties.backgroundColor;
-        color[0] *= properties.backgroundOpacity;
-        color[1] *= properties.backgroundOpacity;
-        color[2] *= properties.backgroundOpacity;
-        color[3] *= properties.backgroundOpacity;
+        if (wireframe) {
+            plainShader->u_color = {{ 0.0f, 0.0f, 0.0f, 1.0f }};
+            plainShader->u_opacity = 1.0f;
+        } else {
+            plainShader->u_color = properties.backgroundColor;
+            plainShader->u_opacity = properties.backgroundOpacity;
+        }
 
         config.program = plainShader->getID();
-        plainShader->u_color = color;
         backgroundArray.bind(*plainShader, tileStencilBuffer, BUFFER_OFFSET(0), glObjectStore);
     }
 
@@ -55,11 +59,11 @@ void Painter::renderBackground(const BackgroundLayer& layer) {
     config.depthMask = GL_FALSE;
     setDepthSublayer(0);
 
-    auto tileIDs = tileCover(state, state.getIntegerZoom(), state.getIntegerZoom());
+    auto tileIDs = util::tileCover(state, state.getIntegerZoom());
 
-    for (auto &id: tileIDs) {
+    for (auto& id : tileIDs) {
         mat4 vtxMatrix;
-        state.matrixFor(vtxMatrix, id, id.z);
+        state.matrixFor(vtxMatrix, id);
         matrix::multiply(vtxMatrix, projMatrix, vtxMatrix);
 
         if (isPatterned) {
@@ -83,23 +87,22 @@ void Painter::renderBackground(const BackgroundLayer& layer) {
                 1.0f / id.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
             }};
 
-            float offsetAx = (std::fmod(util::tileSize, imageSizeScaledA[0]) * id.x) / (float)imageSizeScaledA[0];
-            float offsetAy = (std::fmod(util::tileSize, imageSizeScaledA[1]) * id.y) / (float)imageSizeScaledA[1];
+            float offsetAx = (std::fmod(util::tileSize, imageSizeScaledA[0]) * id.canonical.x) /
+                             (float)imageSizeScaledA[0];
+            float offsetAy = (std::fmod(util::tileSize, imageSizeScaledA[1]) * id.canonical.y) /
+                             (float)imageSizeScaledA[1];
 
-            float offsetBx = (std::fmod(util::tileSize, imageSizeScaledB[0]) * id.x) / (float)imageSizeScaledB[0];
-            float offsetBy = (std::fmod(util::tileSize, imageSizeScaledB[1]) * id.y) / (float)imageSizeScaledB[1];
+            float offsetBx = (std::fmod(util::tileSize, imageSizeScaledB[0]) * id.canonical.x) /
+                             (float)imageSizeScaledB[0];
+            float offsetBy = (std::fmod(util::tileSize, imageSizeScaledB[1]) * id.canonical.y) /
+                             (float)imageSizeScaledB[1];
 
             patternShader->u_offset_a = std::array<float, 2>{{offsetAx, offsetAy}};
             patternShader->u_offset_b = std::array<float, 2>{{offsetBx, offsetBy}};
-
-
         } else {
             plainShader->u_matrix = vtxMatrix;
-            Color color = properties.backgroundColor;
-            plainShader->u_color = color;
         }
 
         MBGL_CHECK_ERROR(glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)tileStencilBuffer.index()));
     }
-
 }

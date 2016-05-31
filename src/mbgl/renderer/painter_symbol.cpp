@@ -5,8 +5,7 @@
 #include <mbgl/sprite/sprite_atlas.hpp>
 #include <mbgl/shader/sdf_shader.hpp>
 #include <mbgl/shader/icon_shader.hpp>
-#include <mbgl/shader/box_shader.hpp>
-#include <mbgl/map/tile_id.hpp>
+#include <mbgl/shader/collision_box_shader.hpp>
 #include <mbgl/util/math.hpp>
 
 #include <cmath>
@@ -14,7 +13,7 @@
 using namespace mbgl;
 
 void Painter::renderSDF(SymbolBucket &bucket,
-                        const TileID &id,
+                        const UnwrappedTileID &tileID,
                         const mat4 &matrix,
                         float sdfFontSize,
                         std::array<float, 2> texsize,
@@ -35,7 +34,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
                         TranslateAnchorType translateAnchor,
                         float paintSize)
 {
-    mat4 vtxMatrix = translatedMatrix(matrix, translate, id, translateAnchor);
+    mat4 vtxMatrix = translatedMatrix(matrix, translate, tileID, translateAnchor);
 
     bool skewed = rotationAlignment == RotationAlignmentType::Map;
     mat4 exMatrix;
@@ -44,7 +43,7 @@ void Painter::renderSDF(SymbolBucket &bucket,
 
     if (skewed) {
         matrix::identity(exMatrix);
-        s = id.pixelsToTileUnits(1, state.getZoom());
+        s = tileID.pixelsToTileUnits(1, state.getZoom());
         gammaScale = 1.0f / std::cos(state.getPitch());
     } else {
         exMatrix = extrudeMatrix;
@@ -52,7 +51,8 @@ void Painter::renderSDF(SymbolBucket &bucket,
         gammaScale = 1.0f;
         matrix::rotate_z(exMatrix, exMatrix, state.getNorthOrientationAngle());
     }
-    matrix::scale(exMatrix, exMatrix, s, s, 1);
+    const bool flippedY = !skewed && state.getViewportMode() == ViewportMode::FlippedY;
+    matrix::scale(exMatrix, exMatrix, s, flippedY ? -s : s, 1);
 
     // If layerStyle.size > bucket.info.fontSize then labels may collide
     float fontSize = paintSize;
@@ -71,18 +71,9 @@ void Painter::renderSDF(SymbolBucket &bucket,
 
     sdfShader.u_zoom = (state.getZoom() - zoomAdjust) * 10; // current zoom level
 
-    if (frame.mapMode == MapMode::Continuous) {
-        FadeProperties f = frameHistory.getFadeProperties(frame.timePoint, util::DEFAULT_FADE_DURATION);
-        sdfShader.u_fadedist = f.fadedist * 10;
-        sdfShader.u_minfadezoom = std::floor(f.minfadezoom * 10);
-        sdfShader.u_maxfadezoom = std::floor(f.maxfadezoom * 10);
-        sdfShader.u_fadezoom = (state.getZoom() + f.bump) * 10;
-    } else { // MapMode::Still
-        sdfShader.u_fadedist = 0;
-        sdfShader.u_minfadezoom = state.getZoom() * 10;
-        sdfShader.u_maxfadezoom = state.getZoom() * 10;
-        sdfShader.u_fadezoom = state.getZoom() * 10;
-    }
+    config.activeTexture = GL_TEXTURE1;
+    frameHistory.bind(glObjectStore);
+    sdfShader.u_fadetexture = 1;
 
     // The default gamma value has to be adjust for the current pixelratio so that we're not
     // drawing blurry font on retina screens.
@@ -96,15 +87,8 @@ void Painter::renderSDF(SymbolBucket &bucket,
     // to draw the halo first.
     if (haloColor[3] > 0.0f && haloWidth > 0.0f) {
         sdfShader.u_gamma = (haloBlur * blurOffset / fontScale / sdfPx + gamma) * gammaScale;
-
-        if (opacity < 1.0f) {
-            haloColor[0] *= opacity;
-            haloColor[1] *= opacity;
-            haloColor[2] *= opacity;
-            haloColor[3] *= opacity;
-        }
-
         sdfShader.u_color = haloColor;
+        sdfShader.u_opacity = opacity;
         sdfShader.u_buffer = (haloOffset - haloWidth / fontScale) / sdfPx;
 
         setDepthSublayer(0);
@@ -114,15 +98,8 @@ void Painter::renderSDF(SymbolBucket &bucket,
     // Then, we draw the text/icon over the halo
     if (color[3] > 0.0f) {
         sdfShader.u_gamma = gamma * gammaScale;
-
-        if (opacity < 1.0f) {
-            color[0] *= opacity;
-            color[1] *= opacity;
-            color[2] *= opacity;
-            color[3] *= opacity;
-        }
-
         sdfShader.u_color = color;
+        sdfShader.u_opacity = opacity;
         sdfShader.u_buffer = (256.0f - 64.0f) / 256.0f;
 
         setDepthSublayer(1);
@@ -130,7 +107,10 @@ void Painter::renderSDF(SymbolBucket &bucket,
     }
 }
 
-void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const TileID& id, const mat4& matrix) {
+void Painter::renderSymbol(SymbolBucket& bucket,
+                           const SymbolLayer& layer,
+                           const UnwrappedTileID& tileID,
+                           const mat4& matrix) {
     // Abort early.
     if (pass == RenderPass::Opaque) {
         return;
@@ -183,7 +163,7 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
 
         if (sdf) {
             renderSDF(bucket,
-                      id,
+                      tileID,
                       matrix,
                       1.0f,
                       {{ float(activeSpriteAtlas->getWidth()) / 4.0f, float(activeSpriteAtlas->getHeight()) / 4.0f }},
@@ -200,7 +180,8 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
                       paint.iconTranslateAnchor,
                       layer.iconSize);
         } else {
-            mat4 vtxMatrix = translatedMatrix(matrix, paint.iconTranslate, id, paint.iconTranslateAnchor);
+            mat4 vtxMatrix =
+                translatedMatrix(matrix, paint.iconTranslate, tileID, paint.iconTranslateAnchor);
 
             bool skewed = layout.iconRotationAlignment == RotationAlignmentType::Map;
             mat4 exMatrix;
@@ -208,13 +189,14 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
 
             if (skewed) {
                 matrix::identity(exMatrix);
-                s = id.pixelsToTileUnits(1, state.getZoom());
+                s = tileID.pixelsToTileUnits(1, state.getZoom());
             } else {
                 exMatrix = extrudeMatrix;
                 matrix::rotate_z(exMatrix, exMatrix, state.getNorthOrientationAngle());
                 s = state.getAltitude();
             }
-            matrix::scale(exMatrix, exMatrix, s, s, 1);
+            const bool flippedY = !skewed && state.getViewportMode() == ViewportMode::FlippedY;
+            matrix::scale(exMatrix, exMatrix, s, flippedY ? -s : s, 1);
 
             matrix::scale(exMatrix, exMatrix, fontScale, fontScale, 1.0f);
 
@@ -234,13 +216,12 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
 
             // adjust min/max zooms for variable font sies
             float zoomAdjust = std::log(fontSize / layout.iconSize) / std::log(2);
-
             iconShader->u_zoom = (state.getZoom() - zoomAdjust) * 10; // current zoom level
-            iconShader->u_fadedist = 0 * 10;
-            iconShader->u_minfadezoom = state.getZoom() * 10;
-            iconShader->u_maxfadezoom = state.getZoom() * 10;
-            iconShader->u_fadezoom = state.getZoom() * 10;
             iconShader->u_opacity = paint.iconOpacity;
+
+            config.activeTexture = GL_TEXTURE1;
+            frameHistory.bind(glObjectStore);
+            iconShader->u_fadetexture = 1;
 
             setDepthSublayer(0);
             bucket.drawIcons(*iconShader, glObjectStore);
@@ -259,7 +240,7 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
         glyphAtlas->bind(glObjectStore);
 
         renderSDF(bucket,
-                  id,
+                  tileID,
                   matrix,
                   24.0f,
                   {{ float(glyphAtlas->width) / 4, float(glyphAtlas->height) / 4 }},
@@ -283,9 +264,10 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
 
         config.program = collisionBoxShader->getID();
         collisionBoxShader->u_matrix = matrix;
-        collisionBoxShader->u_scale = std::pow(2, state.getZoom() - id.z);
+        // TODO: This was the overscaled z instead of the canonical z.
+        collisionBoxShader->u_scale = std::pow(2, state.getZoom() - tileID.canonical.z);
         collisionBoxShader->u_zoom = state.getZoom() * 10;
-        collisionBoxShader->u_maxzoom = (id.z + 1) * 10;
+        collisionBoxShader->u_maxzoom = (tileID.canonical.z + 1) * 10;
         config.lineWidth = 1.0f;
 
         setDepthSublayer(0);
@@ -293,4 +275,5 @@ void Painter::renderSymbol(SymbolBucket& bucket, const SymbolLayer& layer, const
 
     }
 
+    config.activeTexture = GL_TEXTURE0;
 }

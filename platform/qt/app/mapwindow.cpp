@@ -67,8 +67,15 @@ void MapWindow::changeStyle()
 
 void MapWindow::keyPressEvent(QKeyEvent *ev)
 {
-    if (ev->key() == Qt::Key_S) {
+    switch (ev->key()) {
+    case Qt::Key_S:
         changeStyle();
+        break;
+    case Qt::Key_Tab:
+        m_map.cycleDebugOptions();
+        break;
+    default:
+        break;
     }
 
     ev->accept();
@@ -142,15 +149,19 @@ void MapWindow::wheelEvent(QWheelEvent *ev)
     ev->accept();
 }
 
+void MapWindow::initializeGL()
+{
+    QMapbox::initializeGLExtensions();
+}
+
 void MapWindow::resizeGL(int w, int h)
 {
-    m_map.resize(QSize(w, h));
+    QSize size(w, h);
+    m_map.resize(size);
 }
 
 void MapWindow::paintGL()
 {
-    glViewport(0, 0, width(), height());
-
     m_frameDraws++;
     m_map.render();
 }

@@ -1,4 +1,5 @@
 #include <mbgl/style/style.hpp>
+#include <mbgl/style/style_observer.hpp>
 #include <mbgl/source/source.hpp>
 #include <mbgl/tile/tile.hpp>
 #include <mbgl/map/transform_state.hpp>
@@ -19,12 +20,15 @@
 #include <mbgl/util/string.hpp>
 #include <mbgl/platform/log.hpp>
 #include <mbgl/layer/background_layer.hpp>
+#include <mbgl/math/minmax.hpp>
 
 #include <csscolorparser/csscolorparser.hpp>
 
 #include <algorithm>
 
 namespace mbgl {
+
+static StyleObserver nullObserver;
 
 bool Style::addClass(const std::string& className, const PropertyTransition& properties) {
     if (std::find(classes.begin(), classes.end(), className) != classes.end()) return false;
@@ -63,6 +67,7 @@ Style::Style(FileSource& fileSource_, float pixelRatio)
       spriteStore(std::make_unique<SpriteStore>(pixelRatio)),
       spriteAtlas(std::make_unique<SpriteAtlas>(1024, 1024, pixelRatio, *spriteStore)),
       lineAtlas(std::make_unique<LineAtlas>(256, 512)),
+      observer(&nullObserver),
       workers(4) {
     glyphStore->setObserver(this);
     spriteStore->setObserver(this);
@@ -281,9 +286,11 @@ RenderData Style::getRenderData() const {
             continue;
         }
 
-        for (auto tile : source->getTiles()) {
-            if (!tile->data || !tile->data->isReady())
+        for (auto& pair : source->getTiles()) {
+            auto& tile = pair.second;
+            if (!tile.data.isRenderable()) {
                 continue;
+            }
 
             // We're not clipping symbol layers, so when we have both parents and children of symbol
             // layers, we drop all children in favor of their parent to avoid duplicate labels.
@@ -294,7 +301,7 @@ RenderData Style::getRenderData() const {
                 // already a bucket from this layer that is a parent of this tile. Tiles are ordered
                 // by zoom level when we obtain them from getTiles().
                 for (auto it = result.order.rbegin(); it != result.order.rend() && (&it->layer == layer.get()); ++it) {
-                    if (tile->id.isChildOf(it->tile->id)) {
+                    if (tile.data.id.isChildOf(it->tile->data.id)) {
                         skip = true;
                         break;
                     }
@@ -304,9 +311,9 @@ RenderData Style::getRenderData() const {
                 }
             }
 
-            auto bucket = tile->data->getBucket(*layer);
+            auto bucket = tile.data.getBucket(*layer);
             if (bucket) {
-                result.order.emplace_back(*layer, tile, bucket);
+                result.order.emplace_back(*layer, &tile, bucket);
             }
         }
     }
@@ -314,32 +321,25 @@ RenderData Style::getRenderData() const {
     return result;
 }
 
-std::vector<Feature> Style::queryRenderedFeatures(
-        const std::vector<TileCoordinate>& queryGeometry,
-        const double zoom,
-        const double bearing,
-        const optional<std::vector<std::string>>& layerIDs) {
-    std::vector<std::unordered_map<std::string, std::vector<Feature>>> sourceResults;
+std::vector<Feature> Style::queryRenderedFeatures(const StyleQueryParameters& parameters) const {
+    std::unordered_map<std::string, std::vector<Feature>> resultsByLayer;
+
     for (const auto& source : sources) {
-        sourceResults.emplace_back(source->queryRenderedFeatures(queryGeometry, zoom, bearing, layerIDs));
+        auto sourceResults = source->queryRenderedFeatures(parameters);
+        std::move(sourceResults.begin(), sourceResults.end(), std::inserter(resultsByLayer, resultsByLayer.begin()));
     }
 
-    std::vector<Feature> features;
-    auto featuresInserter = std::back_inserter(features);
+    std::vector<Feature> result;
 
     // Combine all results based on the style layer order.
-    for (auto& layerPtr : layers) {
-        auto& layerID = layerPtr->id;
-        for (auto& sourceResult : sourceResults) {
-            auto it = sourceResult.find(layerID);
-            if (it != sourceResult.end()) {
-                auto& layerFeatures = it->second;
-                std::move(layerFeatures.begin(), layerFeatures.end(), featuresInserter);
-            }
+    for (const auto& layer : layers) {
+        auto it = resultsByLayer.find(layer->id);
+        if (it != resultsByLayer.end()) {
+            std::move(it->second.begin(), it->second.end(), std::back_inserter(result));
         }
     }
 
-    return features;
+    return result;
 }
 
 float Style::getQueryRadius() const {
@@ -363,7 +363,7 @@ void Style::onLowMemory() {
     }
 }
 
-void Style::setObserver(Observer* observer_) {
+void Style::setObserver(StyleObserver* observer_) {
     observer = observer_;
 }
 
@@ -394,7 +394,7 @@ void Style::onSourceError(Source& source, std::exception_ptr error) {
     observer->onResourceError(error);
 }
 
-void Style::onTileLoaded(Source& source, const TileID& tileID, bool isNewTile) {
+void Style::onTileLoaded(Source& source, const OverscaledTileID& tileID, bool isNewTile) {
     if (isNewTile) {
         shouldReparsePartialTiles = true;
     }
@@ -403,10 +403,10 @@ void Style::onTileLoaded(Source& source, const TileID& tileID, bool isNewTile) {
     observer->onResourceLoaded();
 }
 
-void Style::onTileError(Source& source, const TileID& tileID, std::exception_ptr error) {
+void Style::onTileError(Source& source, const OverscaledTileID& tileID, std::exception_ptr error) {
     lastError = error;
     Log::Error(Event::Style, "Failed to load tile %s for source %s: %s",
-               std::string(tileID).c_str(), source.id.c_str(), util::toString(error).c_str());
+               util::toString(tileID).c_str(), source.id.c_str(), util::toString(error).c_str());
     observer->onTileError(source, tileID, error);
     observer->onResourceError(error);
 }

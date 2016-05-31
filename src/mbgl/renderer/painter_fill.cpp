@@ -1,7 +1,6 @@
 #include <mbgl/renderer/painter.hpp>
 #include <mbgl/renderer/fill_bucket.hpp>
 #include <mbgl/layer/fill_layer.hpp>
-#include <mbgl/map/tile_id.hpp>
 #include <mbgl/sprite/sprite_atlas.hpp>
 #include <mbgl/shader/outline_shader.hpp>
 #include <mbgl/shader/outlinepattern_shader.hpp>
@@ -10,30 +9,35 @@
 
 using namespace mbgl;
 
-void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileID& id, const mat4& matrix) {
+void Painter::renderFill(FillBucket& bucket,
+                         const FillLayer& layer,
+                         const UnwrappedTileID& tileID,
+                         const mat4& matrix) {
     const FillPaintProperties& properties = layer.paint;
-    mat4 vtxMatrix = translatedMatrix(matrix, properties.fillTranslate, id, properties.fillTranslateAnchor);
+    mat4 vtxMatrix =
+        translatedMatrix(matrix, properties.fillTranslate, tileID, properties.fillTranslateAnchor);
 
     Color fill_color = properties.fillColor;
-    fill_color[0] *= properties.fillOpacity;
-    fill_color[1] *= properties.fillOpacity;
-    fill_color[2] *= properties.fillOpacity;
-    fill_color[3] *= properties.fillOpacity;
+    float opacity = properties.fillOpacity;
 
     Color stroke_color = properties.fillOutlineColor;
     if (stroke_color[3] < 0) {
         stroke_color = fill_color;
-    } else {
-        stroke_color[0] *= properties.fillOpacity;
-        stroke_color[1] *= properties.fillOpacity;
-        stroke_color[2] *= properties.fillOpacity;
-        stroke_color[3] *= properties.fillOpacity;
     }
 
-    const bool pattern = !properties.fillPattern.value.from.empty();
-
+    bool pattern = !properties.fillPattern.value.from.empty();
     bool outline = properties.fillAntialias && !pattern && stroke_color != fill_color;
     bool fringeline = properties.fillAntialias && !pattern && stroke_color == fill_color;
+
+    bool wireframe = frame.debugOptions & MapDebugOptions::Wireframe;
+    if (wireframe) {
+        fill_color = {{ 1.0f, 1.0f, 1.0f, 1.0f }};
+        stroke_color = {{ 1.0f, 1.0f, 1.0f, 1.0f }};
+        opacity = 1.0f;
+        pattern = false;
+        outline = true;
+        fringeline = true;
+    }
 
     config.stencilOp.reset();
     config.stencilTest = GL_TRUE;
@@ -49,6 +53,7 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
         config.lineWidth = 2.0f; // This is always fixed and does not depend on the pixelRatio!
 
         outlineShader->u_color = stroke_color;
+        outlineShader->u_opacity = opacity;
 
         // Draw the entire line
         outlineShader->u_world = {{
@@ -65,7 +70,6 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
 
         // Image fill.
         if (pass == RenderPass::Translucent && posA && posB) {
-
             config.program = patternShader->getID();
             patternShader->u_matrix = vtxMatrix;
             patternShader->u_pattern_tl_a = (*posA).tl;
@@ -85,20 +89,24 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
                 (int)((*posB).size[1] * properties.fillPattern.value.toScale)
             }};
 
-            patternShader->u_patternscale_a = {{
-                1.0f / id.pixelsToTileUnits(imageSizeScaledA[0], state.getIntegerZoom()),
-                1.0f / id.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
-            }};
-            patternShader->u_patternscale_b = {{
-                1.0f / id.pixelsToTileUnits(imageSizeScaledB[0], state.getIntegerZoom()),
-                1.0f / id.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
-            }};
+            patternShader->u_patternscale_a = {
+                { 1.0f / tileID.pixelsToTileUnits(imageSizeScaledA[0], state.getIntegerZoom()),
+                  1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom()) }
+            };
+            patternShader->u_patternscale_b = {
+                { 1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[0], state.getIntegerZoom()),
+                  1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom()) }
+            };
 
-            float offsetAx = (std::fmod(util::tileSize, imageSizeScaledA[0]) * id.x) / (float)imageSizeScaledA[0];
-            float offsetAy = (std::fmod(util::tileSize, imageSizeScaledA[1]) * id.y) / (float)imageSizeScaledA[1];
+            float offsetAx = (std::fmod(util::tileSize, imageSizeScaledA[0]) * tileID.canonical.x) /
+                             (float)imageSizeScaledA[0];
+            float offsetAy = (std::fmod(util::tileSize, imageSizeScaledA[1]) * tileID.canonical.y) /
+                             (float)imageSizeScaledA[1];
 
-            float offsetBx = (std::fmod(util::tileSize, imageSizeScaledB[0]) * id.x) / (float)imageSizeScaledB[0];
-            float offsetBy = (std::fmod(util::tileSize, imageSizeScaledB[1]) * id.y) / (float)imageSizeScaledB[1];
+            float offsetBx = (std::fmod(util::tileSize, imageSizeScaledB[0]) * tileID.canonical.x) /
+                             (float)imageSizeScaledB[0];
+            float offsetBy = (std::fmod(util::tileSize, imageSizeScaledB[1]) * tileID.canonical.y) /
+                             (float)imageSizeScaledB[1];
 
             patternShader->u_offset_a = std::array<float, 2>{{offsetAx, offsetAy}};
             patternShader->u_offset_b = std::array<float, 2>{{offsetBx, offsetBy}};
@@ -130,12 +138,12 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
                 outlinePatternShader->u_mix = properties.fillPattern.value.t;
 
                 outlinePatternShader->u_patternscale_a = {{
-                    1.0f / id.pixelsToTileUnits(imageSizeScaledA[0], state.getIntegerZoom()),
-                    1.0f / id.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
+                    1.0f / tileID.pixelsToTileUnits(imageSizeScaledA[0], state.getIntegerZoom()),
+                    1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
                 }};
                 outlinePatternShader->u_patternscale_b = {{
-                    1.0f / id.pixelsToTileUnits(imageSizeScaledB[0], state.getIntegerZoom()),
-                    1.0f / id.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
+                    1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[0], state.getIntegerZoom()),
+                    1.0f / tileID.pixelsToTileUnits(imageSizeScaledB[1], state.getIntegerZoom())
                 }};
 
                 outlinePatternShader->u_offset_a = std::array<float, 2>{{offsetAx, offsetAy}};
@@ -148,10 +156,9 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
                 bucket.drawVertices(*outlinePatternShader, glObjectStore);
             }
         }
-    }
-    else {
+    } else if (!wireframe) {
         // No image fill.
-        if ((fill_color[3] >= 1.0f) == (pass == RenderPass::Opaque)) {
+        if ((fill_color[3] >= 1.0f && opacity >= 1.0f) == (pass == RenderPass::Opaque)) {
             // Only draw the fill when it's either opaque and we're drawing opaque
             // fragments or when it's translucent and we're drawing translucent
             // fragments
@@ -159,6 +166,7 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
             config.program = plainShader->getID();
             plainShader->u_matrix = vtxMatrix;
             plainShader->u_color = fill_color;
+            plainShader->u_opacity = opacity;
 
             // Draw the actual triangles into the color & stencil buffer.
             setDepthSublayer(1);
@@ -174,7 +182,8 @@ void Painter::renderFill(FillBucket& bucket, const FillLayer& layer, const TileI
         config.lineWidth = 2.0f; // This is always fixed and does not depend on the pixelRatio!
 
         outlineShader->u_color = fill_color;
-        
+        outlineShader->u_opacity = opacity;
+
         // Draw the entire line
         outlineShader->u_world = {{
             static_cast<float>(frame.framebufferSize[0]),

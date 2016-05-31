@@ -11,24 +11,25 @@
 #include <mbgl/renderer/symbol_bucket.hpp>
 #include <mbgl/platform/log.hpp>
 #include <mbgl/util/constants.hpp>
+#include <mbgl/util/string.hpp>
 #include <mbgl/util/exception.hpp>
 #include <utility>
 
 using namespace mbgl;
 
-TileWorker::TileWorker(TileID id_,
+TileWorker::TileWorker(const OverscaledTileID& id_,
                        std::string sourceID_,
                        SpriteStore& spriteStore_,
                        GlyphAtlas& glyphAtlas_,
                        GlyphStore& glyphStore_,
-                       const std::atomic<TileData::State>& state_,
+                       const std::atomic<bool>& obsolete_,
                        const MapMode mode_)
     : id(id_),
       sourceID(std::move(sourceID_)),
       spriteStore(spriteStore_),
       glyphAtlas(glyphAtlas_),
       glyphStore(glyphStore_),
-      state(state_),
+      obsolete(obsolete_),
       mode(mode_) {
 }
 
@@ -91,9 +92,9 @@ TileParseResult TileWorker::parsePendingLayers(const PlacementConfig config) {
 }
 
 TileParseResult TileWorker::prepareResult(const PlacementConfig& config) {
-    result.state = pending.empty() ? TileData::State::parsed : TileData::State::partial;
+    result.complete = pending.empty();
 
-    if (result.state == TileData::State::parsed) {
+    if (result.complete) {
         featureIndex->setCollisionTile(placeLayers(config));
         result.featureIndex = std::move(featureIndex);
         result.geometryTile = std::move(geometryTile);
@@ -130,7 +131,7 @@ std::unique_ptr<CollisionTile> TileWorker::redoPlacement(
 
 void TileWorker::parseLayer(const StyleLayer* layer) {
     // Cancel early when parsing.
-    if (state == TileData::State::obsolete)
+    if (obsolete)
         return;
 
     // Background and custom layers are special cases.
@@ -139,8 +140,8 @@ void TileWorker::parseLayer(const StyleLayer* layer) {
 
     // Skip this bucket if we are to not render this
     if ((layer->source != sourceID) ||
-        (id.z < std::floor(layer->minZoom)) ||
-        (id.z >= std::ceil(layer->maxZoom)) ||
+        (id.overscaledZ < std::floor(layer->minZoom)) ||
+        (id.overscaledZ >= std::ceil(layer->maxZoom)) ||
         (layer->visibility == VisibilityType::None)) {
         return;
     }
@@ -149,15 +150,15 @@ void TileWorker::parseLayer(const StyleLayer* layer) {
     if (!geometryLayer) {
         // The layer specified in the bucket does not exist. Do nothing.
         if (debug::tileParseWarnings) {
-            Log::Warning(Event::ParseTile, "layer '%s' does not exist in tile %d/%d/%d",
-                    layer->sourceLayer.c_str(), id.z, id.x, id.y);
+            Log::Warning(Event::ParseTile, "layer '%s' does not exist in tile %s",
+                    layer->sourceLayer.c_str(), util::toString(id).c_str());
         }
         return;
     }
 
     StyleBucketParameters parameters(id,
                                      *geometryLayer,
-                                     state,
+                                     obsolete,
                                      reinterpret_cast<uintptr_t>(this),
                                      partialParse,
                                      spriteStore,

@@ -27,11 +27,15 @@
 #include <mbgl/shader/icon_shader.hpp>
 #include <mbgl/shader/raster_shader.hpp>
 #include <mbgl/shader/sdf_shader.hpp>
-#include <mbgl/shader/dot_shader.hpp>
-#include <mbgl/shader/box_shader.hpp>
+#include <mbgl/shader/collision_box_shader.hpp>
 #include <mbgl/shader/circle_shader.hpp>
 
+#include <mbgl/algorithm/generate_clip_ids.hpp>
+#include <mbgl/algorithm/generate_clip_ids_impl.hpp>
+
 #include <mbgl/util/constants.hpp>
+#include <mbgl/util/mat3.hpp>
+#include <mbgl/util/string.hpp>
 
 #if defined(DEBUG)
 #include <mbgl/util/stopwatch.hpp>
@@ -59,7 +63,6 @@ Painter::Painter(const TransformState& state_, gl::GLObjectStore& glObjectStore_
     rasterShader = std::make_unique<RasterShader>(glObjectStore);
     sdfGlyphShader = std::make_unique<SDFGlyphShader>(glObjectStore);
     sdfIconShader = std::make_unique<SDFIconShader>(glObjectStore);
-    dotShader = std::make_unique<DotShader>(glObjectStore);
     collisionBoxShader = std::make_unique<CollisionBoxShader>(glObjectStore);
     circleShader = std::make_unique<CircleShader>(glObjectStore);
 
@@ -102,6 +105,9 @@ void Painter::render(const Style& style, const FrameData& frame_, SpriteAtlas& a
     matrix::identity(nativeMatrix);
     matrix::multiply(nativeMatrix, projMatrix, nativeMatrix);
 
+    frameHistory.record(frame.timePoint, state.getZoom(),
+        frame.mapMode == MapMode::Continuous ? util::DEFAULT_FADE_DURATION : Milliseconds(0));
+
     // - UPLOAD PASS -------------------------------------------------------------------------------
     // Uploads all required buffers and images before we do any actual rendering.
     {
@@ -112,6 +118,7 @@ void Painter::render(const Style& style, const FrameData& frame_, SpriteAtlas& a
         spriteAtlas->upload(glObjectStore);
         lineAtlas->upload(glObjectStore);
         glyphAtlas->upload(glObjectStore);
+        frameHistory.upload(glObjectStore);
         annotationSpriteAtlas.upload(glObjectStore);
 
         for (const auto& item : order) {
@@ -132,7 +139,11 @@ void Painter::render(const Style& style, const FrameData& frame_, SpriteAtlas& a
         config.depthTest = GL_FALSE;
         config.depthMask = GL_TRUE;
         config.colorMask = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
-        config.clearColor = { background[0], background[1], background[2], background[3] };
+        if (frame.debugOptions & MapDebugOptions::Wireframe) {
+            config.clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+        } else {
+            config.clearColor = { background[0], background[1], background[2], background[3] };
+        }
         config.clearStencil = 0;
         config.clearDepth = 1;
         MBGL_CHECK_ERROR(glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
@@ -144,11 +155,11 @@ void Painter::render(const Style& style, const FrameData& frame_, SpriteAtlas& a
         MBGL_DEBUG_GROUP("clip");
 
         // Update all clipping IDs.
-        ClipIDGenerator generator;
+        algorithm::ClipIDGenerator generator;
         for (const auto& source : sources) {
             if (source->type == SourceType::Vector || source->type == SourceType::GeoJSON ||
                 source->type == SourceType::Annotations) {
-                generator.update(source->getLoadedTiles());
+                source->updateClipIDs(generator);
             }
             source->updateMatrices(projMatrix, state);
         }
@@ -156,7 +167,10 @@ void Painter::render(const Style& style, const FrameData& frame_, SpriteAtlas& a
         drawClippingMasks(generator.getStencils());
     }
 
-    frameHistory.record(frame.timePoint, state.getZoom());
+    if (frame.debugOptions & MapDebugOptions::StencilClip) {
+        renderClipMasks();
+        return;
+    }
 
     // Actually render the layers
     if (debug::renderTree) { Log::Info(Event::Render, "{"); indent++; }
@@ -247,7 +261,7 @@ void Painter::renderPass(RenderPass pass_,
             layer.as<CustomLayer>()->render(state);
             config.setDirty();
         } else {
-            MBGL_DEBUG_GROUP(layer.id + " - " + std::string(item.tile->id));
+            MBGL_DEBUG_GROUP(layer.id + " - " + util::toString(item.tile->id));
             if (item.bucket->needsClipping()) {
                 setClipping(item.tile->clip);
             }
@@ -260,11 +274,13 @@ void Painter::renderPass(RenderPass pass_,
     }
 }
 
-mat4 Painter::translatedMatrix(const mat4& matrix, const std::array<float, 2> &translation, const TileID &id, TranslateAnchorType anchor) {
+mat4 Painter::translatedMatrix(const mat4& matrix,
+                               const std::array<float, 2>& translation,
+                               const UnwrappedTileID& id,
+                               TranslateAnchorType anchor) {
     if (translation[0] == 0 && translation[1] == 0) {
         return matrix;
     } else {
-
         mat4 vtxMatrix;
         if (anchor == TranslateAnchorType::Viewport) {
             const double sin_a = std::sin(-state.getAngle());

@@ -1,5 +1,4 @@
-#ifndef MBGL_RENDERER_CIRCLE_BUCKET
-#define MBGL_RENDERER_CIRCLE_BUCKET
+#pragma once
 
 #include <mbgl/renderer/bucket.hpp>
 #include <mbgl/map/mode.hpp>
@@ -20,7 +19,7 @@ public:
     ~CircleBucket() override;
 
     void upload(gl::GLObjectStore&) override;
-    void render(Painter&, const StyleLayer&, const TileID&, const mat4&) override;
+    void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
 
     bool hasData() const override;
     bool needsClipping() const override;
@@ -38,5 +37,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif // MBGL_RENDERER_CIRCLE_BUCKET

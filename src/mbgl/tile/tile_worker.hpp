@@ -1,8 +1,7 @@
-#ifndef MBGL_MAP_TILE_WORKER
-#define MBGL_MAP_TILE_WORKER
+#pragma once
 
 #include <mbgl/map/mode.hpp>
-#include <mbgl/tile/tile_data.hpp>
+#include <mbgl/tile/tile_id.hpp>
 #include <mbgl/util/noncopyable.hpp>
 #include <mbgl/util/variant.hpp>
 #include <mbgl/util/ptr.hpp>
@@ -13,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <list>
+#include <atomic>
 #include <unordered_map>
 
 namespace mbgl {
@@ -30,7 +30,7 @@ class SymbolLayer;
 // thread. This class is movable-only because the vector contains movable-only value elements.
 class TileParseResultData {
 public:
-    TileData::State state = TileData::State::invalid;
+    bool complete = false;
     std::unordered_map<std::string, std::unique_ptr<Bucket>> buckets;
     std::unique_ptr<FeatureIndex> featureIndex;
     std::unique_ptr<const GeometryTile> geometryTile;
@@ -42,12 +42,12 @@ using TileParseResult = variant<
 
 class TileWorker : public util::noncopyable {
 public:
-    TileWorker(TileID,
+    TileWorker(const OverscaledTileID&,
                std::string sourceID,
                SpriteStore&,
                GlyphAtlas&,
                GlyphStore&,
-               const std::atomic<TileData::State>&,
+               const std::atomic<bool>&,
                const MapMode);
     ~TileWorker();
 
@@ -66,13 +66,13 @@ private:
     void insertBucket(const std::string& name, std::unique_ptr<Bucket>);
     std::unique_ptr<CollisionTile> placeLayers(PlacementConfig);
 
-    const TileID id;
+    const OverscaledTileID id;
     const std::string sourceID;
 
     SpriteStore& spriteStore;
     GlyphAtlas& glyphAtlas;
     GlyphStore& glyphStore;
-    const std::atomic<TileData::State>& state;
+    const std::atomic<bool>& obsolete;
     const MapMode mode;
 
     bool partialParse = false;
@@ -95,5 +95,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

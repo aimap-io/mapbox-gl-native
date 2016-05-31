@@ -3,7 +3,6 @@ package com.mapbox.mapboxsdk.annotations;
 import android.graphics.Bitmap;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.support.annotation.Nullable;
 
 import com.mapbox.mapboxsdk.geometry.LatLng;
 
@@ -12,9 +11,7 @@ import com.mapbox.mapboxsdk.geometry.LatLng;
  * <p>
  * Builder for composing {@link com.mapbox.mapboxsdk.annotations.Marker} objects.
  * </p>
- * <p/>
  * <h3>Example</h3>
- * <p/>
  * <pre>
  * mMapView.addMarker(new MarkerOptions()
  *   .title("Intersection")
@@ -24,23 +21,18 @@ import com.mapbox.mapboxsdk.geometry.LatLng;
  */
 public final class MarkerOptions extends BaseMarkerOptions<Marker, MarkerOptions> implements Parcelable {
 
-    public static final Parcelable.Creator<MarkerOptions> CREATOR
-            = new Parcelable.Creator<MarkerOptions>() {
-        public MarkerOptions createFromParcel(Parcel in) {
-            return new MarkerOptions(in);
-        }
+    private Marker marker;
 
-        public MarkerOptions[] newArray(int size) {
-            return new MarkerOptions[size];
-        }
-    };
+    public MarkerOptions() {
+        marker = new Marker();
+    }
 
-    private MarkerOptions(Parcel in) {
+    protected MarkerOptions(Parcel in) {
         marker = new Marker();
         position((LatLng) in.readParcelable(LatLng.class.getClassLoader()));
         snippet(in.readString());
         title(in.readString());
-        if(in.readByte()!=0){
+        if (in.readByte() != 0) {
             // this means we have an icon
             String iconId = in.readString();
             Bitmap iconBitmap = in.readParcelable(Bitmap.class.getClassLoader());
@@ -72,12 +64,6 @@ public final class MarkerOptions extends BaseMarkerOptions<Marker, MarkerOptions
         }
     }
 
-    private Marker marker;
-
-    public MarkerOptions() {
-        marker = new Marker();
-    }
-
     /**
      * Do not use this method. Used internally by the SDK.
      *
@@ -106,6 +92,17 @@ public final class MarkerOptions extends BaseMarkerOptions<Marker, MarkerOptions
     public Icon getIcon() {
         return icon;
     }
+
+    public static final Parcelable.Creator<MarkerOptions> CREATOR
+            = new Parcelable.Creator<MarkerOptions>() {
+        public MarkerOptions createFromParcel(Parcel in) {
+            return new MarkerOptions(in);
+        }
+
+        public MarkerOptions[] newArray(int size) {
+            return new MarkerOptions[size];
+        }
+    };
 
     @Override
     public boolean equals(Object o) {

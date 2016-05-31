@@ -1,5 +1,4 @@
-#ifndef MBGL_RENDERER_SYMBOLBUCKET
-#define MBGL_RENDERER_SYMBOLBUCKET
+#pragma once
 
 #include <mbgl/renderer/bucket.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
@@ -26,7 +25,6 @@ namespace mbgl {
 class SDFShader;
 class IconShader;
 class CollisionBoxShader;
-class DotShader;
 class CollisionTile;
 class SpriteAtlas;
 class SpriteStore;
@@ -52,8 +50,7 @@ class SymbolInstance {
                 const float textBoxScale, const float textPadding, const float textAlongLine,
                 const float iconBoxScale, const float iconPadding, const float iconAlongLine,
                 const GlyphPositions& face, const IndexedSubfeature& indexedfeature);
-        float x;
-        float y;
+        Point<float> point;
         uint32_t index;
         bool hasText;
         bool hasIcon;
@@ -73,7 +70,7 @@ public:
     ~SymbolBucket() override;
 
     void upload(gl::GLObjectStore&) override;
-    void render(Painter&, const StyleLayer&, const TileID&, const mat4&) override;
+    void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
     bool hasData() const override;
     bool hasTextData() const;
     bool hasIconData() const;
@@ -158,5 +155,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

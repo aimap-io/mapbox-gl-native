@@ -1,5 +1,4 @@
-#ifndef MBGL_MAP_VECTOR_TILE_DATA
-#define MBGL_MAP_VECTOR_TILE_DATA
+#pragma once
 
 #include <mbgl/tile/tile_data.hpp>
 #include <mbgl/tile/tile_worker.hpp>
@@ -19,7 +18,7 @@ class FeatureIndex;
 
 class VectorTileData : public TileData {
 public:
-    VectorTileData(const TileID&,
+    VectorTileData(const OverscaledTileID&,
                    std::unique_ptr<GeometryTileMonitor> monitor,
                    std::string sourceID,
                    Style&,
@@ -35,14 +34,10 @@ public:
     void redoPlacement(PlacementConfig config, const std::function<void()>&) override;
     void redoPlacement(const std::function<void()>&) override;
 
-    bool hasData() const override;
-
     void queryRenderedFeatures(
             std::unordered_map<std::string, std::vector<Feature>>& result,
-            const GeometryCollection& queryGeometry,
-            const double bearing,
-            const double tileSize,
-            const double scale,
+            const GeometryCoordinates& queryGeometry,
+            const TransformState&,
             const optional<std::vector<std::string>>& layerIDs) override;
 
     void cancel() override;
@@ -69,8 +64,9 @@ private:
     // Stores the placement configuration of how the text should be placed. This isn't necessarily
     // the one that is being displayed.
     PlacementConfig targetConfig;
+
+    // Used to signal the worker that it should abandon parsing this tile as soon as possible.
+    std::atomic<bool> obsolete { false };
 };
 
 } // namespace mbgl
-
-#endif

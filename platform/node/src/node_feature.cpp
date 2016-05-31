@@ -7,6 +7,7 @@ using namespace mapbox::geometry;
 using Value = mbgl::Value;
 using Feature = mbgl::Feature;
 using Geometry = mbgl::Feature::geometry_type;
+using GeometryCollection = mapbox::geometry::geometry_collection<double>;
 using Properties = mbgl::Feature::property_map;
 
 template <class T>
@@ -48,9 +49,9 @@ private:
 };
 
 template <class T>
-struct ToCoordinates {
+struct ToCoordinatesOrGeometries {
 public:
-    // Handles line_string, multi_point, multi_line_string, and multi_polygon.
+    // Handles line_string, polygon, multi_point, multi_line_string, multi_polygon, and geometry_collection.
     template <class E>
     v8::Local<v8::Object> operator()(const std::vector<E>& vector) {
         Nan::EscapableHandleScope scope;
@@ -69,27 +70,17 @@ public:
         return scope.Escape(result);
     }
 
-    v8::Local<v8::Object> operator()(const polygon<T>& polygon) {
-        Nan::EscapableHandleScope scope;
-        v8::Local<v8::Array> result = Nan::New<v8::Array>(1 + polygon.interior_rings.size());
-        Nan::Set(result, 0, operator()(polygon.exterior_ring));
-        for (std::size_t i = 0; i < polygon.interior_rings.size(); ++i) {
-            Nan::Set(result, i + 1, operator()(polygon.interior_rings[i]));
-        }
-        return scope.Escape(result);
-    }
-
-    v8::Local<v8::Object> operator()(const geometry_collection<T>& collection) {
-        Nan::EscapableHandleScope scope;
-        v8::Local<v8::Array> result = Nan::New<v8::Array>(collection.size());
-        for (std::size_t i = 0; i < collection.size(); ++i) {
-            Nan::Set(result, i, toJS(collection[i]));
-        }
-        return scope.Escape(result);
+    v8::Local<v8::Object> operator()(const geometry<T>& geometry) {
+        return toJS(geometry);
     }
 };
 
 struct ToValue {
+    v8::Local<v8::Value> operator()(std::nullptr_t) {
+        Nan::EscapableHandleScope scope;
+        return scope.Escape(Nan::Null());
+    }
+
     v8::Local<v8::Value> operator()(bool t) {
         Nan::EscapableHandleScope scope;
         return scope.Escape(Nan::New(t));
@@ -132,8 +123,13 @@ v8::Local<v8::Object> toJS(const Geometry& geometry) {
 
     v8::Local<v8::Object> result = Nan::New<v8::Object>();
 
-    Nan::Set(result, Nan::New("type").ToLocalChecked(), Geometry::visit(geometry, ToType<double>()));
-    Nan::Set(result, Nan::New("coordinates").ToLocalChecked(), Geometry::visit(geometry, ToCoordinates<double>()));
+    Nan::Set(result,
+        Nan::New("type").ToLocalChecked(),
+        Geometry::visit(geometry, ToType<double>()));
+
+    Nan::Set(result,
+        Nan::New(geometry.is<GeometryCollection>() ? "geometries" : "coordinates").ToLocalChecked(),
+        Geometry::visit(geometry, ToCoordinatesOrGeometries<double>()));
 
     return scope.Escape(result);
 }
@@ -163,7 +159,7 @@ v8::Local<v8::Object> toJS(const Feature& feature) {
     Nan::Set(result, Nan::New("properties").ToLocalChecked(), toJS(feature.properties));
 
     if (feature.id) {
-        Nan::Set(result, Nan::New("id").ToLocalChecked(), toJS(*feature.id));
+        Nan::Set(result, Nan::New("id").ToLocalChecked(), Nan::New(double(*feature.id)));
     }
 
     return scope.Escape(result);

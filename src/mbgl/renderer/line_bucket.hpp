@@ -1,12 +1,10 @@
-#ifndef MBGL_RENDERER_LINEBUCKET
-#define MBGL_RENDERER_LINEBUCKET
+#pragma once
 
 #include <mbgl/renderer/bucket.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
 #include <mbgl/geometry/vao.hpp>
 #include <mbgl/geometry/elements_buffer.hpp>
 #include <mbgl/geometry/line_buffer.hpp>
-#include <mbgl/util/vec.hpp>
 #include <mbgl/layer/line_layer.hpp>
 
 #include <vector>
@@ -28,7 +26,7 @@ public:
     ~LineBucket() override;
 
     void upload(gl::GLObjectStore&) override;
-    void render(Painter&, const StyleLayer&, const TileID&, const mat4&) override;
+    void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
     bool hasData() const override;
     bool needsClipping() const override;
 
@@ -45,10 +43,10 @@ private:
         uint16_t a, b, c;
     };
     void addCurrentVertex(const GeometryCoordinate& currentVertex, double& distance,
-            const vec2<double>& normal, float endLeft, float endRight, bool round,
+            const Point<double>& normal, double endLeft, double endRight, bool round,
             GLint startVertex, std::vector<LineBucket::TriangleElement>& triangleStore);
     void addPieSliceVertex(const GeometryCoordinate& currentVertex, double distance,
-            const vec2<double>& extrude, bool lineTurnsLeft, GLint startVertex,
+            const Point<double>& extrude, bool lineTurnsLeft, GLint startVertex,
             std::vector<TriangleElement>& triangleStore);
 
 public:
@@ -68,5 +66,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef MBGL_MAP_MAP
-#define MBGL_MAP_MAP
+#pragma once
 
 #include <mbgl/util/optional.hpp>
 #include <mbgl/util/chrono.hpp>
@@ -34,7 +33,8 @@ public:
     explicit Map(View&, FileSource&,
                  MapMode mapMode = MapMode::Continuous,
                  GLContextMode contextMode = GLContextMode::Unique,
-                 ConstrainMode constrainMode = ConstrainMode::HeightOnly);
+                 ConstrainMode constrainMode = ConstrainMode::HeightOnly,
+                 ViewportMode viewportMode = ViewportMode::Default);
     ~Map();
 
     // Register a callback that will get called (on the render thread) when all resources have
@@ -117,10 +117,14 @@ public:
     // North Orientation
     void setNorthOrientation(NorthOrientation);
     NorthOrientation getNorthOrientation() const;
-    
+
     // Constrain mode
     void setConstrainMode(ConstrainMode);
     ConstrainMode getConstrainMode() const;
+
+    // Viewport mode
+    void setViewportMode(ViewportMode);
+    ViewportMode getViewportMode() const;
 
     // Size
     uint16_t getWidth() const;
@@ -161,7 +165,7 @@ public:
 
     // Feature queries
     std::vector<Feature> queryRenderedFeatures(const ScreenCoordinate&, const optional<std::vector<std::string>>& layerIDs = {});
-    std::vector<Feature> queryRenderedFeatures(const std::array<ScreenCoordinate, 2>&, const optional<std::vector<std::string>>& layerIDs = {});
+    std::vector<Feature> queryRenderedFeatures(const ScreenBox&,        const optional<std::vector<std::string>>& layerIDs = {});
 
     // Memory
     void setSourceTileCacheSize(size_t);
@@ -181,5 +185,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

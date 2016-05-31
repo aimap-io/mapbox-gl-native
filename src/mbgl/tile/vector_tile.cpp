@@ -96,6 +96,9 @@ std::unordered_map<std::string,Value> VectorTileFeature::getProperties() const {
     const auto & end_itr = tags_iter.second;
     while (start_itr != end_itr) {
         uint32_t tag_key = static_cast<uint32_t>(*start_itr++);
+        if (start_itr == end_itr) {
+            throw std::runtime_error("uneven number of feature tag ids");
+        }
         uint32_t tag_val = static_cast<uint32_t>(*start_itr++);
         properties[layer.keys.at(tag_key)] = layer.values.at(tag_val);
     }
@@ -111,6 +114,7 @@ GeometryCollection VectorTileFeature::getGeometries() const {
     uint32_t length = 0;
     int32_t x = 0;
     int32_t y = 0;
+    const float scale = float(util::EXTENT) / layer.extent;
 
     GeometryCollection lines;
 
@@ -136,7 +140,7 @@ GeometryCollection VectorTileFeature::getGeometries() const {
                 line = &lines.back();
             }
 
-            line->emplace_back(x, y);
+            line->emplace_back(::round(x * scale), ::round(y * scale));
 
         } else if (cmd == 7) { // closePolygon
             if (!line->empty()) {
@@ -149,10 +153,6 @@ GeometryCollection VectorTileFeature::getGeometries() const {
     }
 
     return lines;
-}
-
-uint32_t VectorTileFeature::getExtent() const {
-    return layer.extent;
 }
 
 VectorTile::VectorTile(std::shared_ptr<const std::string> data_)
@@ -214,7 +214,8 @@ std::string VectorTileLayer::getName() const {
     return name;
 }
 
-VectorTileMonitor::VectorTileMonitor(const TileID& tileID_, float pixelRatio_, const std::string& urlTemplate_, FileSource& fileSource_)
+VectorTileMonitor::VectorTileMonitor(const OverscaledTileID& tileID_, float pixelRatio_,
+                                     const std::string& urlTemplate_, FileSource& fileSource_)
     : tileID(tileID_),
       pixelRatio(pixelRatio_),
       urlTemplate(urlTemplate_),
@@ -222,7 +223,8 @@ VectorTileMonitor::VectorTileMonitor(const TileID& tileID_, float pixelRatio_, c
 }
 
 std::unique_ptr<AsyncRequest> VectorTileMonitor::monitorTile(const GeometryTileMonitor::Callback& callback) {
-    const Resource resource = Resource::tile(urlTemplate, pixelRatio, tileID.x, tileID.y, tileID.sourceZ);
+    const Resource resource = Resource::tile(urlTemplate, pixelRatio, tileID.canonical.x,
+                                             tileID.canonical.y, tileID.canonical.z);
     return fileSource.request(resource, [callback, this](Response res) {
         if (res.error) {
             callback(std::make_exception_ptr(std::runtime_error(res.error->message)), nullptr, res.modified, res.expires);

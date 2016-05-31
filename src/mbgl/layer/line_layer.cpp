@@ -1,8 +1,6 @@
 #include <mbgl/layer/line_layer.hpp>
 #include <mbgl/style/style_bucket_parameters.hpp>
 #include <mbgl/renderer/line_bucket.hpp>
-#include <mbgl/map/tile_id.hpp>
-#include <mbgl/util/get_geometries.hpp>
 #include <mbgl/geometry/feature_index.hpp>
 #include <mbgl/util/math.hpp>
 #include <mbgl/util/intersection_tests.hpp>
@@ -77,7 +75,7 @@ std::unique_ptr<Bucket> LineLayer::createBucket(StyleBucketParameters& parameter
 
     bucket->layout = layout;
 
-    StyleCalculationParameters p(parameters.tileID.z);
+    StyleCalculationParameters p(parameters.tileID.overscaledZ);
     bucket->layout.lineCap.calculate(p);
     bucket->layout.lineJoin.calculate(p);
     bucket->layout.lineMiterLimit.calculate(p);
@@ -85,7 +83,7 @@ std::unique_ptr<Bucket> LineLayer::createBucket(StyleBucketParameters& parameter
 
     auto& name = bucketName();
     parameters.eachFilteredFeature(filter, [&] (const auto& feature, std::size_t index, const std::string& layerName) {
-        auto geometries = getGeometries(feature);
+        auto geometries = feature.getGeometries();
         bucket->addGeometry(geometries);
         parameters.featureIndex.insert(geometries, index, layerName, name);
     });
@@ -102,30 +100,30 @@ float LineLayer::getLineWidth() const {
     }
 }
 
-optional<GeometryCollection> offsetLine(const GeometryCollection& rings, const float offset) {
+optional<GeometryCollection> offsetLine(const GeometryCollection& rings, const double offset) {
     if (offset == 0) return {};
 
     GeometryCollection newRings;
-    vec2<double> zero(0, 0);
-    for (auto& ring : rings) {
+    Point<double> zero(0, 0);
+    for (const auto& ring : rings) {
         newRings.emplace_back();
         auto& newRing = newRings.back();
 
         for (auto i = ring.begin(); i != ring.end(); i++) {
             auto& p = *i;
 
-            auto aToB = i == ring.begin() ?
+            Point<double> aToB = i == ring.begin() ?
                 zero :
-                util::perp(util::unit(vec2<double>(p - *(i - 1))));
-            auto bToC = i + 1 == ring.end() ?
+                util::perp(util::unit(convertPoint<double>(p - *(i - 1))));
+            Point<double> bToC = i + 1 == ring.end() ?
                 zero :
-                util::perp(util::unit(vec2<double>(*(i + 1) - p)));
-            auto extrude = util::unit(aToB + bToC);
+                util::perp(util::unit(convertPoint<double>(*(i + 1) - p)));
+            Point<double> extrude = util::unit(aToB + bToC);
 
             const double cosHalfAngle = extrude.x * bToC.x + extrude.y * bToC.y;
             extrude *= (1.0 / cosHalfAngle);
 
-            newRing.push_back((extrude * offset) + p);
+            newRing.push_back(convertPoint<int16_t>(extrude * offset) + p);
         }
     }
 

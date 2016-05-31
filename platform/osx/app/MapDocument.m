@@ -14,6 +14,27 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     { .latitude = -13.15589555, .longitude = -74.2178961777998 },
 };
 
+NS_ARRAY_OF(id <MGLAnnotation>) *MBXFlattenedShapes(NS_ARRAY_OF(id <MGLAnnotation>) *shapes) {
+    NSMutableArray *flattenedShapes = [NSMutableArray arrayWithCapacity:shapes.count];
+    for (id <MGLAnnotation> shape in shapes) {
+        NSArray *subshapes;
+        if ([shape isKindOfClass:[MGLMultiPolyline class]]) {
+            subshapes = [(MGLMultiPolyline *)shape polylines];
+        } else if ([shape isKindOfClass:[MGLMultiPolygon class]]) {
+            subshapes = [(MGLMultiPolygon *)shape polygons];
+        } else if ([shape isKindOfClass:[MGLShapeCollection class]]) {
+            subshapes = MBXFlattenedShapes([(MGLShapeCollection *)shape shapes]);
+        }
+        
+        if (subshapes) {
+            [flattenedShapes addObjectsFromArray:subshapes];
+        } else {
+            [flattenedShapes addObject:shape];
+        }
+    }
+    return flattenedShapes;
+}
+
 @interface MapDocument () <NSWindowDelegate, NSSharingServicePickerDelegate, NSMenuDelegate, MGLMapViewDelegate>
 
 @property (weak) IBOutlet NSMenu *mapViewContextMenu;
@@ -120,22 +141,22 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     NSURL *styleURL;
     switch (tag) {
         case 1:
-            styleURL = [MGLStyle streetsStyleURL];
+            styleURL = [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 2:
-            styleURL = [MGLStyle emeraldStyleURL];
+            styleURL = [MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 3:
-            styleURL = [MGLStyle lightStyleURL];
+            styleURL = [MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 4:
-            styleURL = [MGLStyle darkStyleURL];
+            styleURL = [MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 5:
-            styleURL = [MGLStyle satelliteStyleURL];
+            styleURL = [MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         case 6:
-            styleURL = [MGLStyle hybridStyleURL];
+            styleURL = [MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion];
             break;
         default:
             NSAssert(NO, @"Cannot set style from control with tag %li", (long)tag);
@@ -242,6 +263,18 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 
 - (IBAction)toggleCollisionBoxes:(id)sender {
     self.mapView.debugMask ^= MGLMapDebugCollisionBoxesMask;
+}
+
+- (IBAction)toggleWireframes:(id)sender {
+    self.mapView.debugMask ^= MGLMapDebugWireframesMask;
+}
+
+- (IBAction)showColorBuffer:(id)sender {
+    self.mapView.debugMask &= ~MGLMapDebugStencilBufferMask;
+}
+
+- (IBAction)showStencilBuffer:(id)sender {
+    self.mapView.debugMask |= MGLMapDebugStencilBufferMask;
 }
 
 - (IBAction)toggleShowsToolTipsOnDroppedPins:(id)sender {
@@ -405,7 +438,11 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 - (void)handlePressGesture:(NSPressGestureRecognizer *)gestureRecognizer {
     if (gestureRecognizer.state == NSGestureRecognizerStateBegan) {
         NSPoint location = [gestureRecognizer locationInView:self.mapView];
-        [self dropPinAtPoint:location];
+        if (!NSPointInRect([gestureRecognizer locationInView:self.mapView.compass], self.mapView.compass.bounds)
+            && !NSPointInRect([gestureRecognizer locationInView:self.mapView.zoomControls], self.mapView.zoomControls.bounds)
+            && !NSPointInRect([gestureRecognizer locationInView:self.mapView.attributionView], self.mapView.attributionView.bounds)) {
+            [self dropPinAtPoint:location];
+        }
     }
 }
 
@@ -420,9 +457,17 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
 }
 
 - (DroppedPinAnnotation *)pinAtPoint:(NSPoint)point {
+    NSArray *features = [self.mapView visibleFeaturesAtPoint:point];
+    NSString *title;
+    for (id <MGLFeature> feature in features) {
+        if (!title) {
+            title = [feature attributeForKey:@"name_en"] ?: [feature attributeForKey:@"name"];
+        }
+    }
+    
     DroppedPinAnnotation *annotation = [[DroppedPinAnnotation alloc] init];
     annotation.coordinate = [self.mapView convertPoint:point toCoordinateFromView:self.mapView];
-    annotation.title = @"Dropped Pin";
+    annotation.title = title ?: @"Dropped Pin";
     _spellOutNumberFormatter.numberStyle = NSNumberFormatterSpellOutStyle;
     if (_showsToolTipsOnDroppedPins) {
         NSString *formattedNumber = [_spellOutNumberFormatter stringFromNumber:@(++_droppedPinCounter)];
@@ -439,6 +484,16 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     [self.mapView removeAnnotation:[self.mapView annotationAtPoint:point]];
 }
 
+- (IBAction)selectFeatures:(id)sender {
+    [self selectFeaturesAtPoint:_mouseLocationForMapViewContextMenu];
+}
+
+- (void)selectFeaturesAtPoint:(NSPoint)point {
+    NSArray *features = [self.mapView visibleFeaturesAtPoint:point];
+    NSArray *flattenedFeatures = MBXFlattenedShapes(features);
+    [self.mapView addAnnotations:flattenedFeatures];
+}
+
 #pragma mark User interface validation
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
@@ -447,22 +502,22 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         NSCellStateValue state;
         switch (menuItem.tag) {
             case 1:
-                state = [styleURL isEqual:[MGLStyle streetsStyleURL]];
+                state = [styleURL isEqual:[MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 2:
-                state = [styleURL isEqual:[MGLStyle emeraldStyleURL]];
+                state = [styleURL isEqual:[MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 3:
-                state = [styleURL isEqual:[MGLStyle lightStyleURL]];
+                state = [styleURL isEqual:[MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 4:
-                state = [styleURL isEqual:[MGLStyle darkStyleURL]];
+                state = [styleURL isEqual:[MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 5:
-                state = [styleURL isEqual:[MGLStyle satelliteStyleURL]];
+                state = [styleURL isEqual:[MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             case 6:
-                state = [styleURL isEqual:[MGLStyle hybridStyleURL]];
+                state = [styleURL isEqual:[MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion]];
                 break;
             default:
                 return NO;
@@ -496,6 +551,9 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         menuItem.hidden = annotationUnderCursor == nil;
         return YES;
     }
+    if (menuItem.action == @selector(selectFeatures:)) {
+        return YES;
+    }
     if (menuItem.action == @selector(toggleTileBoundaries:)) {
         BOOL isShown = self.mapView.debugMask & MGLMapDebugTileBoundariesMask;
         menuItem.title = isShown ? @"Hide Tile Boundaries" : @"Show Tile Boundaries";
@@ -514,6 +572,21 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     if (menuItem.action == @selector(toggleCollisionBoxes:)) {
         BOOL isShown = self.mapView.debugMask & MGLMapDebugCollisionBoxesMask;
         menuItem.title = isShown ? @"Hide Collision Boxes" : @"Show Collision Boxes";
+        return YES;
+    }
+    if (menuItem.action == @selector(toggleWireframes:)) {
+        BOOL isShown = self.mapView.debugMask & MGLMapDebugWireframesMask;
+        menuItem.title = isShown ? @"Hide Wireframes" : @"Show Wireframes";
+        return YES;
+    }
+    if (menuItem.action == @selector(showColorBuffer:)) {
+        BOOL enabled = self.mapView.debugMask & MGLMapDebugStencilBufferMask;
+        menuItem.state = enabled ? NSOffState : NSOnState;
+        return YES;
+    }
+    if (menuItem.action == @selector(showStencilBuffer:)) {
+        BOOL enabled = self.mapView.debugMask & MGLMapDebugStencilBufferMask;
+        menuItem.state = enabled ? NSOnState : NSOffState;
         return YES;
     }
     if (menuItem.action == @selector(toggleShowsToolTipsOnDroppedPins:)) {
@@ -557,12 +630,12 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
     }
     
     NSArray *styleURLs = @[
-        [MGLStyle streetsStyleURL],
-        [MGLStyle emeraldStyleURL],
-        [MGLStyle lightStyleURL],
-        [MGLStyle darkStyleURL],
-        [MGLStyle satelliteStyleURL],
-        [MGLStyle hybridStyleURL],
+        [MGLStyle streetsStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle outdoorsStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle lightStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle darkStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle satelliteStyleURLWithVersion:MGLStyleDefaultVersion],
+        [MGLStyle satelliteStreetsStyleURLWithVersion:MGLStyleDefaultVersion],
     ];
     return [styleURLs indexOfObject:self.mapView.styleURL];
 }
@@ -673,6 +746,10 @@ static const CLLocationCoordinate2D WorldTourDestinations[] = {
         DroppedPinAnnotation *droppedPin = annotation;
         [droppedPin pause];
     }
+}
+
+- (CGFloat)mapView:(MGLMapView *)mapView alphaForShapeAnnotation:(MGLShape *)annotation {
+    return 0.8;
 }
 
 @end

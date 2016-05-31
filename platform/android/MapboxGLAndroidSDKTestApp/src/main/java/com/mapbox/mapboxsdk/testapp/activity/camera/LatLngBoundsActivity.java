@@ -19,6 +19,7 @@ import com.mapbox.mapboxsdk.maps.OnMapReadyCallback;
 import com.mapbox.mapboxsdk.maps.UiSettings;
 import com.mapbox.mapboxsdk.testapp.R;
 import com.mapbox.mapboxsdk.maps.MapView;
+import com.mapbox.mapboxsdk.testapp.model.constants.AppConstant;
 
 public class LatLngBoundsActivity extends AppCompatActivity {
 
@@ -42,8 +43,7 @@ public class LatLngBoundsActivity extends AppCompatActivity {
         }
 
         mMapView = (MapView) findViewById(R.id.mapView);
-        mMapView.setAccessToken(getString(R.string.mapbox_access_token));
-        mMapView.setStyle(Style.DARK);
+        mMapView.setStyleUrl(Style.getDarkStyleUrl(AppConstant.STYLE_VERSION));
         mMapView.onCreate(savedInstanceState);
         mMapView.getMapAsync(new OnMapReadyCallback() {
             @Override
@@ -68,18 +68,18 @@ public class LatLngBoundsActivity extends AppCompatActivity {
                         .include(LOS_ANGELES)
                         .build();
 
-                // And padding
-                int padding = (int) getResources().getDimension(R.dimen.coordinatebounds_margin);
+                // Add map padding
+                int mapPadding = (int) getResources().getDimension(R.dimen.fab_margin);
+                mapboxMap.setPadding(mapPadding, mapPadding, mapPadding, mapPadding);
 
-                // Move camera to the bounds with padding
+                // Move camera to the bounds with added padding
+                int padding = (int) getResources().getDimension(R.dimen.coordinatebounds_margin);
                 mapboxMap.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding));
 
                 // Call mapboxMap.getProjection().getVisibleRegion().latLngBounds to retrieve the bounds
                 Log.v(MapboxConstants.TAG, mapboxMap.getProjection().getVisibleRegion().latLngBounds.toString());
             }
         });
-
-
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.mapbox.mapboxsdk.maps.widgets;
 
+import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
@@ -9,7 +10,6 @@ import android.graphics.PointF;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.LayerDrawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -20,9 +20,9 @@ import android.support.annotation.ColorInt;
 import android.support.annotation.FloatRange;
 import android.support.annotation.IntRange;
 import android.support.annotation.NonNull;
-import android.support.v4.view.animation.FastOutLinearInInterpolator;
 import android.util.AttributeSet;
 import android.view.View;
+
 import com.mapbox.mapboxsdk.R;
 import com.mapbox.mapboxsdk.camera.CameraPosition;
 import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
@@ -34,6 +34,7 @@ import com.mapbox.mapboxsdk.location.LocationServices;
 import com.mapbox.mapboxsdk.maps.MapboxMap;
 import com.mapbox.mapboxsdk.maps.Projection;
 import com.mapbox.mapboxsdk.maps.UiSettings;
+
 import java.lang.ref.WeakReference;
 
 /**
@@ -54,7 +55,6 @@ public class MyLocationView extends View {
     private long locationUpdateTimestamp;
 
     private float gpsDirection;
-    private float compassDirection;
     private float previousDirection;
 
     private float accuracy = 0;
@@ -62,6 +62,7 @@ public class MyLocationView extends View {
 
     private ValueAnimator locationChangeAnimator;
     private ValueAnimator accuracyAnimator;
+    private ObjectAnimator directionAnimator;
 
     private Drawable foregroundDrawable;
     private Drawable foregroundBearingDrawable;
@@ -117,7 +118,6 @@ public class MyLocationView extends View {
             throw new RuntimeException("The dimensions from location and bearing drawables should be match");
         }
 
-
         foregroundDrawable = defaultDrawable;
         foregroundBearingDrawable = bearingDrawable;
         setForegroundDrawableTint(foregroundTintColor);
@@ -135,6 +135,7 @@ public class MyLocationView extends View {
                 foregroundBearingDrawable.mutate().setColorFilter(color, PorterDuff.Mode.SRC_IN);
             }
         }
+        invalidate();
     }
 
     public final void setShadowDrawable(Drawable drawable) {
@@ -164,16 +165,19 @@ public class MyLocationView extends View {
             }
             backgroundDrawable.mutate().setColorFilter(color, PorterDuff.Mode.SRC_IN);
         }
+        invalidate();
     }
 
     public final void setAccuracyTint(@ColorInt int color) {
         int alpha = accuracyPaint.getAlpha();
         accuracyPaint.setColor(color);
         accuracyPaint.setAlpha(alpha);
+        invalidate();
     }
 
     public final void setAccuracyAlpha(@IntRange(from = 0, to = 255) int alpha) {
         accuracyPaint.setAlpha(alpha);
+        invalidate();
     }
 
     private void invalidateBounds() {
@@ -225,20 +229,8 @@ public class MyLocationView extends View {
                 foregroundDrawable.draw(canvas);
             }
         } else if (foregroundBearingDrawable != null && foregroundBounds != null) {
-            getRotateDrawable(foregroundBearingDrawable, myBearingTrackingMode == MyBearingTracking.COMPASS ? compassDirection : gpsDirection).draw(canvas);
+            foregroundBearingDrawable.draw(canvas);
         }
-    }
-
-    private Drawable getRotateDrawable(final Drawable d, final float angle) {
-        return new LayerDrawable(new Drawable[]{d}) {
-            @Override
-            public void draw(final Canvas canvas) {
-                canvas.save();
-                canvas.rotate(angle, foregroundBounds.centerX(), foregroundBounds.centerY());
-                super.draw(canvas);
-                canvas.restore();
-            }
-        };
     }
 
     @Override
@@ -354,6 +346,7 @@ public class MyLocationView extends View {
             if (myLocationTrackingMode == MyLocationTracking.TRACKING_FOLLOW) {
                 // always face north
                 gpsDirection = 0;
+                setCompass(gpsDirection);
             }
         }
         invalidate();
@@ -376,20 +369,25 @@ public class MyLocationView extends View {
     }
 
     private void setCompass(float bearing) {
-        if (myLocationTrackingMode == MyLocationTracking.TRACKING_NONE) {
-            float oldDir = compassDirection;
-            float newDir = bearing;
-            float diff = oldDir - newDir;
-            if (diff > 180.0f) {
-                newDir += 360.0f;
-            } else if (diff < -180.0f) {
-                newDir -= 360.f;
-            }
-            compassDirection = newDir;
-            invalidate();
-        } else {
-            compassDirection = 0;
+        float oldDir = previousDirection;
+        if (directionAnimator != null) {
+            oldDir = (Float) directionAnimator.getAnimatedValue();
+            directionAnimator.end();
+            directionAnimator = null;
         }
+
+        float newDir = bearing;
+        float diff = oldDir - newDir;
+        if (diff > 180.0f) {
+            newDir += 360.0f;
+        } else if (diff < -180.0f) {
+            newDir -= 360.f;
+        }
+        previousDirection = newDir;
+
+        directionAnimator = ObjectAnimator.ofFloat(this, View.ROTATION, oldDir, newDir);
+        directionAnimator.setDuration(1000);
+        directionAnimator.start();
     }
 
     public float getCenterX() {
@@ -428,20 +426,21 @@ public class MyLocationView extends View {
 
     private class CompassListener implements SensorEventListener {
 
-        private boolean paused;
         private SensorManager mSensorManager;
         private Sensor mAccelerometer;
         private Sensor mMagnetometer;
-        private float[] mLastAccelerometer = new float[3];
-        private float[] mLastMagnetometer = new float[3];
-        private boolean mLastAccelerometerSet = false;
-        private boolean mLastMagnetometerSet = false;
-        private float[] mR = new float[9];
-        private float[] mOrientation = new float[3];
+        private boolean paused;
+
         private float mCurrentDegree = 0f;
 
+        private float[] mOrientation = new float[3];
+        private float[] mGData = new float[3];
+        private float[] mMData = new float[3];
+        private float[] mR = new float[16];
+        private float[] mI = new float[16];
+
         // Controls the sensor updateLatLng rate in milliseconds
-        private static final int UPDATE_RATE_MS = 300;
+        private static final int UPDATE_RATE_MS = 500;
 
         // Compass data
         private long mCompassUpdateNextTimestamp = 0;
@@ -475,30 +474,24 @@ public class MyLocationView extends View {
                 return;
             }
 
-            if (event.sensor == mAccelerometer) {
-                System.arraycopy(event.values, 0, mLastAccelerometer, 0, event.values.length);
-                mLastAccelerometerSet = true;
-            } else if (event.sensor == mMagnetometer) {
-                System.arraycopy(event.values, 0, mLastMagnetometer, 0, event.values.length);
-                mLastMagnetometerSet = true;
+            int type = event.sensor.getType();
+            float[] data;
+            if (type == Sensor.TYPE_ACCELEROMETER) {
+                data = mGData;
+            } else if (type == Sensor.TYPE_MAGNETIC_FIELD) {
+                data = mMData;
+            } else {
+                // we should not be here.
+                return;
             }
 
-            if (mLastAccelerometerSet && mLastMagnetometerSet) {
-                SensorManager.getRotationMatrix(mR, null, mLastAccelerometer, mLastMagnetometer);
-                SensorManager.getOrientation(mR, mOrientation);
-                float azimuthInRadians = mOrientation[0];
-
-                float compassBearing = (float) (Math.toDegrees(azimuthInRadians) + 360) % 360;
-                if (compassBearing < 0) {
-                    // only allow positive degrees
-                    compassBearing += 360;
-                }
-
-                if (compassBearing > mCurrentDegree + 15 || compassBearing < mCurrentDegree - 15) {
-                    mCurrentDegree = compassBearing;
-                    setCompass(mCurrentDegree);
-                }
+            for (int i = 0; i < 3; i++) {
+                data[i] = event.values[i];
             }
+
+            SensorManager.getRotationMatrix(mR, mI, mGData, mMData);
+            SensorManager.getOrientation(mR, mOrientation);
+            setCompass((int) (mOrientation[0] * 180.0f / Math.PI));
             mCompassUpdateNextTimestamp = currentTime + UPDATE_RATE_MS;
         }
 
@@ -598,8 +591,7 @@ public class MyLocationView extends View {
             if (previousUpdateTimeStamp == 0) {
                 locationUpdateDuration = 0;
             } else {
-                // TODO remove 10 * hack to multiply duration to workaround easing interpolation (easeCamera)
-                locationUpdateDuration = 10 * (locationUpdateTimestamp - previousUpdateTimeStamp);
+                locationUpdateDuration = locationUpdateTimestamp - previousUpdateTimeStamp;
             }
 
             // calculate interpolated location
@@ -614,19 +606,21 @@ public class MyLocationView extends View {
             if (myBearingTrackingMode == MyBearingTracking.GPS) {
                 if (location.hasBearing()) {
                     builder.bearing(location.getBearing());
-                    gpsDirection = 0;
                 }
+                gpsDirection = 0;
+                setCompass(gpsDirection);
             } else if (myBearingTrackingMode == MyBearingTracking.COMPASS) {
                 if (!compassListener.isPaused()) {
                     builder.bearing(compassListener.getCurrentDegree());
-                    compassDirection = 0;
+                    setCompass(0);
                 }
             }
 
+            // accuracy
             updateAccuracy(location);
 
-            // animate to new camera
-            mapboxMap.easeCamera(CameraUpdateFactory.newCameraPosition(builder.build()), (int) locationUpdateDuration, null);
+            // ease to new camera position with a linear interpolator
+            mapboxMap.easeCamera(CameraUpdateFactory.newCameraPosition(builder.build()), (int) locationUpdateDuration, false /*linear interpolator*/);
         }
 
         @Override
@@ -656,6 +650,7 @@ public class MyLocationView extends View {
             // update LatLng direction
             if (location.hasBearing()) {
                 gpsDirection = clamp(location.getBearing() - (float) mapboxMap.getCameraPosition().bearing);
+                setCompass(gpsDirection);
             }
 
             // update LatLng accuracy
@@ -664,7 +659,7 @@ public class MyLocationView extends View {
             // calculate updateLatLng time + add some extra offset to improve animation
             long previousUpdateTimeStamp = locationUpdateTimestamp;
             locationUpdateTimestamp = SystemClock.elapsedRealtime();
-            long locationUpdateDuration = (long) ((locationUpdateTimestamp - previousUpdateTimeStamp) * 1.2);
+            long locationUpdateDuration = (long) ((locationUpdateTimestamp - previousUpdateTimeStamp) * 1.1);
 
             // calculate interpolated entity
             interpolatedLocation = new LatLng((latLng.getLatitude() + previousLocation.getLatitude()) / 2, (latLng.getLongitude() + previousLocation.getLongitude()) / 2);
@@ -680,7 +675,6 @@ public class MyLocationView extends View {
             locationChangeAnimator.addUpdateListener(new MarkerCoordinateAnimatorListener(this,
                     previousLocation, interpolatedLocation
             ));
-            locationChangeAnimator.setInterpolator(new FastOutLinearInInterpolator());
             locationChangeAnimator.start();
 
             // use interpolated location as current location

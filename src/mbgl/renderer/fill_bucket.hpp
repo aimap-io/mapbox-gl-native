@@ -1,5 +1,4 @@
-#ifndef MBGL_RENDERER_FILLBUCKET
-#define MBGL_RENDERER_FILLBUCKET
+#pragma once
 
 #include <mbgl/renderer/bucket.hpp>
 #include <mbgl/tile/geometry_tile.hpp>
@@ -34,7 +33,7 @@ public:
     ~FillBucket() override;
 
     void upload(gl::GLObjectStore&) override;
-    void render(Painter&, const StyleLayer&, const TileID&, const mat4&) override;
+    void render(Painter&, const StyleLayer&, const UnwrappedTileID&, const mat4&) override;
     bool hasData() const override;
     bool needsClipping() const override;
 
@@ -67,5 +66,3 @@ private:
 };
 
 } // namespace mbgl
-
-#endif

@@ -8,6 +8,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class MGLAnnotationView;
 @class MGLAnnotationImage;
 @class MGLUserLocation;
 @class MGLPolyline;
@@ -18,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol MGLAnnotation;
 @protocol MGLOverlay;
 @protocol MGLCalloutView;
+@protocol MGLFeature;
 
 /** The vertical alignment of an annotation within a map view. */
 typedef NS_ENUM(NSUInteger, MGLAnnotationVerticalAlignment) {
@@ -41,6 +43,9 @@ typedef NS_OPTIONS(NSUInteger, MGLMapDebugMaskOptions) {
     /** Edges of glyphs and symbols are shown as faint, green lines to help
         diagnose collision and label placement issues. */
     MGLMapDebugCollisionBoxesMask = 1 << 4,
+    /** Line widths, backgrounds, and fill colors are ignored to create a
+        wireframe effect. */
+    MGLMapDebugWireframesMask = 1 << 5,
 };
 
 /**
@@ -876,6 +881,11 @@ IB_DESIGNABLE
 /**
  Adds an annotation to the map view.
  
+ @note `MGLMultiPolyline`, `MGLMultiPolygon`, and `MGLShapeCollection` objects
+    cannot be added to the map view at this time. Any multipolyline,
+    multipolygon, or shape collection object that is passed into this method is
+    silently ignored.
+ 
  @param annotation The annotation object to add to the receiver. This object
     must conform to the `MGLAnnotation` protocol. The map view retains the
     annotation object. */
@@ -883,6 +893,11 @@ IB_DESIGNABLE
 
 /**
  Adds an array of annotations to the map view.
+ 
+ @note `MGLMultiPolyline`, `MGLMultiPolygon`, and `MGLShapeCollection` objects
+    cannot be added to the map view at this time. Any multipolyline,
+    multipolygon, or shape collection objects that are passed in are silently
+    ignored.
  
  @param annotations An array of annotation objects. Each object in the array
     must conform to the `MGLAnnotation` protocol. The map view retains each
@@ -930,6 +945,22 @@ IB_DESIGNABLE
     such object exists in the reuse queue.
  */
 - (nullable MGLAnnotationImage *)dequeueReusableAnnotationImageWithIdentifier:(NSString *)identifier;
+
+/**
+ Returns a reusable annotation view object associated with its identifier.
+ 
+ For performance reasons, you should generally reuse `MGLAnnotationView`
+ objects for identical-looking annotations in your map views. Dequeueing
+ saves time and memory during performance-critical operations such as
+ scrolling.
+ 
+ @param identifier A string identifying the annotation view to be reused.
+    This string is the same one you specify when initially returning the
+    annotation view object using the `-mapView:viewForAnnotation:` method.
+ @return An annotation view object with the given identifier, or `nil` if no
+    such object exists in the reuse queue.
+ */
+- (nullable MGLAnnotationView *)dequeueReusableAnnotationViewWithIdentifier:(NSString *)identifier;
 
 #pragma mark Managing Annotation Selections
 
@@ -1000,6 +1031,132 @@ IB_DESIGNABLE
     protocol.
  */
 - (void)removeOverlays:(NS_ARRAY_OF(id <MGLOverlay>) *)overlays;
+
+#pragma mark Accessing the Underlying Map Data
+
+/**
+ Returns an array of rendered map features that intersect with a given point.
+ 
+ This method may return features from any of the map’s style layers. To restrict
+ the search to a particular layer or layers, use the
+ `-visibleFeaturesAtPoint:inStyleLayersWithIdentifiers:` method. For more
+ information about searching for map features, see that method’s documentation.
+ 
+ @param point A point expressed in the map view’s coordinate system.
+ @return An array of objects conforming to the `MGLFeature` protocol that
+    represent features in the sources used by the current style.
+ */
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesAtPoint:(CGPoint)point NS_SWIFT_NAME(visibleFeatures(at:));
+
+/**
+ Returns an array of rendered map features that intersect with a given point,
+ restricted to the given style layers.
+ 
+ Each object in the returned array represents a feature rendered by the
+ current style and provides access to attributes specified by the relevant
+ <a href="https://www.mapbox.com/mapbox-gl-style-spec/#sources">tile sources</a>.
+ The returned array includes features specified in vector and GeoJSON tile
+ sources but does not include anything from raster, image, or video sources.
+ 
+ Only visible features are returned. For example, suppose the current style uses
+ the
+ <a href="https://www.mapbox.com/vector-tiles/mapbox-streets/">Mapbox Streets source</a>,
+ but none of the specified style layers includes features that have the `maki`
+ property set to `bus`. If you pass a point corresponding to the location of a
+ bus stop into this method, the bus stop feature does not appear in the
+ resulting array. On the other hand, if the style does include bus stops, an
+ `MGLFeature` object representing that bus stop is returned and its
+ `featureAttributes` dictionary has the `maki` key set to `bus` (along with
+ other attributes). The dictionary contains only the attributes provided by the
+ tile source; it does not include computed attribute values or rules about how
+ the feature is rendered by the current style.
+ 
+ The returned array is sorted by z-order, starting with the topmost rendered
+ feature and ending with the bottommost rendered feature. A feature that is
+ rendered multiple times due to wrapping across the antimeridian at low zoom
+ levels is included only once, subject to the caveat that follows.
+ 
+ Features come from tiled vector data or GeoJSON data that is converted to tiles
+ internally, so feature geometries are clipped at tile boundaries and features
+ may appear duplicated across tiles. For example, suppose the specified point
+ lies along a road that spans the screen. The resulting array includes those
+ parts of the road that lie within the map tile that contain the specified
+ point, even if the road extends into other tiles.
+ 
+ To find out the layer names in a particular style, view the style in
+ <a href="https://www.mapbox.com/studio/">Mapbox Studio</a>.
+ 
+ @param point A point expressed in the map view’s coordinate system.
+ @param styleLayerIdentifiers A set of strings that correspond to the names of
+    layers defined in the current style. Only the features contained in these
+    layers are included in the returned array.
+ @return An array of objects conforming to the `MGLFeature` protocol that
+    represent features in the sources used by the current style.
+ */
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesAtPoint:(CGPoint)point inStyleLayersWithIdentifiers:(nullable NS_SET_OF(NSString *) *)styleLayerIdentifiers NS_SWIFT_NAME(visibleFeatures(at:styleLayerIdentifiers:));
+
+/**
+ Returns an array of rendered map features that intersect with the given
+ rectangle.
+ 
+ This method may return features from any of the map’s style layers. To restrict
+ the search to a particular layer or layers, use the
+ `-visibleFeaturesAtPoint:inStyleLayersWithIdentifiers:` method. For more
+ information about searching for map features, see that method’s documentation.
+ 
+ @param rect A rectangle expressed in the map view’s coordinate system.
+ @return An array of objects conforming to the `MGLFeature` protocol that
+    represent features in the sources used by the current style.
+ */
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesInRect:(CGRect)rect NS_SWIFT_NAME(visibleFeatures(in:));
+
+/**
+ Returns an array of rendered map features that intersect with the given
+ rectangle, restricted to the given style layers.
+ 
+ Each object in the returned array represents a feature rendered by the
+ current style and provides access to attributes specified by the relevant
+ <a href="https://www.mapbox.com/mapbox-gl-style-spec/#sources">tile sources</a>.
+ The returned array includes features specified in vector and GeoJSON tile
+ sources but does not include anything from raster, image, or video sources.
+ 
+ Only visible features are returned. For example, suppose the current style uses
+ the
+ <a href="https://www.mapbox.com/vector-tiles/mapbox-streets/">Mapbox Streets source</a>,
+ but none of the specified style layers includes features that have the `maki`
+ property set to `bus`. If you pass a rectangle containing the location of a bus
+ stop into this method, the bus stop feature does not appear in the resulting
+ array. On the other hand, if the style does include bus stops, an `MGLFeature`
+ object representing that bus stop is returned and its `featureAttributes`
+ dictionary has the `maki` key set to `bus` (along with other attributes). The
+ dictionary contains only the attributes provided by the tile source; it does
+ not include computed attribute values or rules about how the feature is
+ rendered by the current style.
+ 
+ The returned array is sorted by z-order, starting with the topmost rendered
+ feature and ending with the bottommost rendered feature. A feature that is
+ rendered multiple times due to wrapping across the antimeridian at low zoom
+ levels is included only once, subject to the caveat that follows.
+ 
+ Features come from tiled vector data or GeoJSON data that is converted to tiles
+ internally, so feature geometries are clipped at tile boundaries and features
+ may appear duplicated across tiles. For example, suppose the specified
+ rectangle intersects with a road that spans the screen. The resulting array
+ includes those parts of the road that lie within the map tiles covering the
+ specified rectangle, even if the road extends into other tiles. The portion of
+ the road within each map tile is included individually.
+ 
+ To find out the layer names in a particular style, view the style in
+ <a href="https://www.mapbox.com/studio/">Mapbox Studio</a>.
+ 
+ @param rect A rectangle expressed in the map view’s coordinate system.
+ @param styleLayerIdentifiers A set of strings that correspond to the names of
+    layers defined in the current style. Only the features contained in these
+    layers are included in the returned array.
+ @return An array of objects conforming to the `MGLFeature` protocol that
+    represent features in the sources used by the current style.
+ */
+- (NS_ARRAY_OF(id <MGLFeature>) *)visibleFeaturesInRect:(CGRect)rect inStyleLayersWithIdentifiers:(nullable NS_SET_OF(NSString *) *)styleLayerIdentifiers NS_SWIFT_NAME(visibleFeatures(in:styleLayerIdentifiers:));
 
 #pragma mark Debugging the Map
 
@@ -1150,6 +1307,15 @@ IB_DESIGNABLE
 - (void)mapView:(MGLMapView *)mapView didChangeUserTrackingMode:(MGLUserTrackingMode)mode animated:(BOOL)animated;
 
 #pragma mark Managing the Display of Annotations
+
+/**
+ Returns a view object to use for the marker for the specified point annotation object.
+ 
+ @param mapView The map view that requested the annotation view.
+ @param annotation The object representing the annotation that is about to be displayed.
+ @return The view object to display for the specified annotation or `nil` if you want to display the default marker image.
+ */
+- (nullable MGLAnnotationView *)mapView:(MGLMapView *)mapView viewForAnnotation:(id <MGLAnnotation>)annotation;
 
 /**
  Returns an image object to use for the marker for the specified point annotation object.

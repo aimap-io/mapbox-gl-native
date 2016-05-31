@@ -473,20 +473,21 @@ NAN_METHOD(NodeMap::QueryRenderedFeatures) {
             auto pos0 = Nan::Get(posOrBox, 0).ToLocalChecked().As<v8::Array>();
             auto pos1 = Nan::Get(posOrBox, 1).ToLocalChecked().As<v8::Array>();
 
-            std::array<mbgl::ScreenCoordinate, 2> queryBox = {{{
+            result = nodeMap->map->queryRenderedFeatures(mbgl::ScreenBox {
+                {
                     Nan::Get(pos0, 0).ToLocalChecked()->NumberValue(),
                     Nan::Get(pos0, 1).ToLocalChecked()->NumberValue()
                 }, {
                     Nan::Get(pos1, 0).ToLocalChecked()->NumberValue(),
                     Nan::Get(pos1, 1).ToLocalChecked()->NumberValue()
-                }}};
-            result = nodeMap->map->queryRenderedFeatures(queryBox);
+                }
+            });
 
         } else {
-            mbgl::ScreenCoordinate queryPoint(
+            result = nodeMap->map->queryRenderedFeatures(mbgl::ScreenCoordinate {
                 Nan::Get(posOrBox, 0).ToLocalChecked()->NumberValue(),
-                Nan::Get(posOrBox, 1).ToLocalChecked()->NumberValue());
-            result = nodeMap->map->queryRenderedFeatures(queryPoint);
+                Nan::Get(posOrBox, 1).ToLocalChecked()->NumberValue()
+            });
         }
 
         auto array = Nan::New<v8::Array>();
@@ -527,12 +528,13 @@ std::unique_ptr<mbgl::AsyncRequest> NodeMap::request(const mbgl::Resource& resou
     Nan::HandleScope scope;
 
     auto requestHandle = NodeRequest::Create(resource, callback_)->ToObject();
+    auto request = Nan::ObjectWrap::Unwrap<NodeRequest>(requestHandle);
     auto callbackHandle = Nan::New<v8::Function>(NodeRequest::Respond, requestHandle);
 
     v8::Local<v8::Value> argv[] = { requestHandle, callbackHandle };
     Nan::MakeCallback(handle()->GetInternalField(1)->ToObject(), "request", 2, argv);
 
-    return std::make_unique<mbgl::AsyncRequest>();
+    return std::make_unique<NodeRequest::NodeAsyncRequest>(request);
 }
 
-}
+} // namespace node_mbgl

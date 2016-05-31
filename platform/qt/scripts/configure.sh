@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 
+CXX11ABI=$(scripts/check-cxx11abi.sh)
+
 PROTOZERO_VERSION=1.3.0
 BOOST_VERSION=1.60.0
-GEOMETRY_VERSION=0.1.0
-GEOJSONVT_VERSION=4.1.2
-GTEST_VERSION=1.7.0
+GEOMETRY_VERSION=0.5.0
+GEOJSONVT_VERSION=4.1.2${CXX11ABI:-}
+GTEST_VERSION=1.7.0${CXX11ABI:-}
 LIBJPEG_TURBO_VERSION=1.4.2
 NUNICODE_VERSION=1.6
 PIXELMATCH_VERSION=0.9.0
@@ -35,6 +37,7 @@ function print_qt_flags {
 
     QT_VERSION_MAJOR=$(qmake -query QT_VERSION | cut -d. -f1)
     CONFIG+="    'qt_version_major%': ['${QT_VERSION_MAJOR}'],"$LN
+    CONFIG+="    'qt_image_decoders%': [0],"$LN
 
     CONFIG+="    'qt_core_cflags%': $(quote_flags $(mason cflags Qt system "QtCore")),"$LN
     CONFIG+="    'qt_gui_cflags%': $(quote_flags $(mason cflags Qt system "QtGui")),"$LN
@@ -70,7 +73,7 @@ function print_qt_flags {
     fi
 }
 
-CONFIGURE_SUPLATFORM=platform/qt/scripts/configure-${SUBPLATFORM}.sh
+CONFIGURE_SUPLATFORM=platform/qt/scripts/configure-${MASON_PLATFORM_VERSION}.sh
 
 if [ -f $CONFIGURE_SUPLATFORM ]; then
    source $CONFIGURE_SUPLATFORM
